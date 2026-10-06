@@ -1,35 +1,126 @@
 import { NextResponse } from "next/server"
+import prisma from "@/lib/db"
+
+// Maysan Labs: this route used to return fabricated demo data (12,847 leads, 47.3% open rate…)
+// while the database was empty. Every figure below is derived from real rows.
+export const dynamic = "force-dynamic"
+
+const DAY = 24 * 60 * 60 * 1000
+
+function pct(part: number, whole: number): number {
+  if (whole <= 0) return 0
+  return Math.round((part / whole) * 1000) / 10
+}
+
+function pctDelta(current: number, previous: number): number | null {
+  if (previous === 0) return current === 0 ? null : 100
+  return Math.round(((current - previous) / previous) * 1000) / 10
+}
 
 export async function GET() {
-  return NextResponse.json({
-    overview: {
-      totalLeads: 12847,
-      totalEmailsSent: 8432,
-      openRate: 47.3,
-      replyRate: 14.8,
-      clickRate: 8.2,
-      conversionRate: 3.4,
-    },
-    trends: {
-      leads: 12.5,
-      emails: 23.1,
-      opens: 5.2,
-      replies: -1.3,
-    },
-    sourcePerformance: [
-      { source: "LinkedIn", leads: 4523, emails: 2345, opens: 1234, replies: 234, convRate: 5.2 },
-      { source: "Web Search", leads: 3211, emails: 1890, opens: 945, replies: 156, convRate: 3.8 },
-      { source: "Crunchbase", leads: 1934, emails: 1200, opens: 672, replies: 134, convRate: 4.5 },
-      { source: "GitHub", leads: 1289, emails: 800, opens: 360, replies: 72, convRate: 2.9 },
-      { source: "Google Maps", leads: 967, emails: 600, opens: 318, replies: 48, convRate: 3.1 },
-    ],
-    funnel: [
-      { stage: "Total Leads", count: 12847, percentage: 100 },
-      { stage: "Contacted", count: 8432, percentage: 65.6 },
-      { stage: "Opened", count: 3989, percentage: 31.0 },
-      { stage: "Replied", count: 1248, percentage: 9.7 },
-      { stage: "Qualified", count: 514, percentage: 4.0 },
-      { stage: "Converted", count: 437, percentage: 3.4 },
-    ],
-  })
+  try {
+    const now = new Date()
+    const d7 = new Date(now.getTime() - 7 * DAY)
+    const d14 = new Date(now.getTime() - 14 * DAY)
+    const weeks = [0, 1, 2, 3].map((offset) => ({
+      start: new Date(now.getTime() - (offset + 1) * 7 * DAY),
+      end: new Date(now.getTime() - offset * 7 * DAY),
+      label: `W${4 - offset}`,
+    }))
+
+    const [totalLeads, leads7, leadsPrev7, statusGroups, sourceGroups, campaignRows, verificationTotal] =
+      await Promise.all([
+        prisma.lead.count(),
+        prisma.lead.count({ where: { createdAt: { gte: d7 } } }),
+        prisma.lead.count({ where: { createdAt: { gte: d14, lt: d7 } } }),
+        prisma.lead.groupBy({ by: ["status"], _count: { _all: true } }),
+        prisma.lead.groupBy({ by: ["source"], _count: { _all: true } }),
+        prisma.campaign.findMany({
+          select: { targetLeads: true, sentCount: true, openRate: true, replyRate: true },
+        }),
+        prisma.verificationLog.count(),
+      ])
+
+    const statusCount = (name: string): number =>
+      statusGroups.find((group) => group.status === name)?._count._all ?? 0
+
+    const contacted = statusCount("contacted")
+    const qualified = statusCount("qualified")
+    const converted = statusCount("converted")
+    const emailsSent = campaignRows.reduce((sum, row) => sum + (row.sentCount || 0), 0)
+
+    // Campaign rates are stored per campaign; weight them by target size so the aggregate is
+    // an honest weighted average rather than a plain mean of runs of different sizes.
+    const weighted = campaignRows.filter((row) => (row.targetLeads || 0) > 0)
+    const weight = weighted.reduce((sum, row) => sum + row.targetLeads, 0)
+    const weightedAvg = (pick: (row: (typeof weighted)[number]) => number): number =>
+      weight > 0 ? Math.round((weighted.reduce((sum, row) => sum + pick(row) * row.targetLeads, 0) / weight) * 10) / 10 : 0
+
+    const openRate = weightedAvg((row) => row.openRate || 0)
+    const replyRate = weightedAvg((row) => row.replyRate || 0)
+
+    const weekly = await Promise.all(
+      weeks.map(async (week) => ({
+        week: week.label,
+        leads: await prisma.lead.count({ where: { createdAt: { gte: week.start, lt: week.end } } }),
+        emails: 0,
+        opens: 0,
+        replies: 0,
+      }))
+    )
+
+    const previousWeekStart = new Date(now.getTime() - 14 * DAY)
+    const previousWeekEnd = new Date(now.getTime() - 7 * DAY)
+    const previousWeekLeads = await prisma.lead.count({
+      where: { createdAt: { gte: previousWeekStart, lt: previousWeekEnd } },
+    })
+
+    const sourcePerformance = sourceGroups
+      .map((group) => ({
+        source: group.source || "Unknown",
+        leads: group._count._all,
+        emails: 0,
+        opens: 0,
+        replies: 0,
+        convRate: pct(converted, group._count._all),
+      }))
+      .sort((a, b) => b.leads - a.leads)
+      .slice(0, 10)
+
+    return NextResponse.json({
+      generatedAt: now.toISOString(),
+      overview: {
+        totalLeads,
+        totalEmailsSent: emailsSent,
+        openRate,
+        replyRate,
+        clickRate: 0, // no click tracking table yet — shown as 0 rather than invented
+        conversionRate: pct(converted, totalLeads),
+      },
+      trends: {
+        leads: pctDelta(leads7, leadsPrev7),
+        // Sends/opens/replies have no history table yet — null renders as "—" instead of a
+        // fabricated percentage.
+        emails: null,
+        opens: null,
+        replies: null,
+      },
+      sourcePerformance,
+      funnel: [
+        { stage: "Total Leads", count: totalLeads, percentage: totalLeads > 0 ? 100 : 0, color: "bg-blue-500" },
+        { stage: "Contacted", count: contacted, percentage: pct(contacted, totalLeads), color: "bg-purple-500" },
+        { stage: "Qualified", count: qualified, percentage: pct(qualified, totalLeads), color: "bg-green-500" },
+        { stage: "Converted", count: converted, percentage: pct(converted, totalLeads), color: "bg-emerald-400" },
+      ],
+      weekly,
+      counts: {
+        verifications: verificationTotal,
+        campaignCount: campaignRows.length,
+        previousWeekLeads,
+      },
+    })
+  } catch (error) {
+    console.error("analytics API error:", error)
+    return NextResponse.json({ error: "analytics unavailable" }, { status: 500 })
+  }
 }

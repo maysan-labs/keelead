@@ -1,46 +1,113 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
-  Users, Mail, Search, Megaphone, TrendingUp, ArrowUpRight,
+  Users, Mail, Search, Megaphone, ArrowUpRight, ArrowDownRight,
   Plus, MessageSquare, Download, Eye
 } from "lucide-react"
 import Link from "next/link"
 
+// Maysan Labs: this page used to render literal demo values ("12,847" leads, a fake activity
+// feed and invented source bars). Every number now comes from /api/stats, which counts real
+// rows — a fresh install honestly shows zeros.
+interface Activity {
+  action: string
+  detail: string
+  time: string
+  type: "lead" | "verify" | "search" | "export" | "campaign"
+}
+
+interface StatsPayload {
+  generatedAt: string
+  totals: {
+    leads: number
+    verifiedEmails: number
+    searchesToday: number
+    searchesTotal: number
+    activeCampaigns: number
+    campaigns: number
+    emailsSent: number
+    verifications: number
+    verificationsValid: number
+    exports: number
+  }
+  trends: { leads: number | null; verifiedEmails: number | null; searches: number | null; campaigns: number | null }
+  sources: { name: string; leads: number; percentage: number }[]
+  monthly: { label: string; year: number; leads: number }[]
+  recentActivity: Activity[]
+}
+
+function TrendLabel({ value }: { value: number | null }) {
+  if (value === null) {
+    return (
+      <div className="flex items-center gap-1 mt-1">
+        <span className="text-xs text-zinc-500">no prior week to compare</span>
+      </div>
+    )
+  }
+  const up = value >= 0
+  return (
+    <div className="flex items-center gap-1 mt-1">
+      {up ? <ArrowUpRight className="w-3 h-3 text-emerald-400" /> : <ArrowDownRight className="w-3 h-3 text-red-400" />}
+      <span className={`text-xs ${up ? "text-emerald-400" : "text-red-400"}`}>
+        {up ? "+" : ""}
+        {value}%
+      </span>
+      <span className="text-xs text-zinc-500">vs last week</span>
+    </div>
+  )
+}
+
 export default function DashboardPage() {
+  const [data, setData] = useState<StatsPayload | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    fetch("/api/stats", { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return response.json()
+      })
+      .then((json: StatsPayload) => {
+        if (alive) setData(json)
+      })
+      .catch((err) => {
+        if (alive) setError(String(err))
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const totals = data?.totals
+  const loading = !data && !error
+  const value = (n: number | undefined) => (loading ? "…" : (n ?? 0).toLocaleString())
+
   const stats = [
-    { label: "Total Leads", value: "12,847", change: "+12.5%", icon: Users, color: "text-blue-400" },
-    { label: "Verified Emails", value: "9,234", change: "+8.2%", icon: Mail, color: "text-emerald-400" },
-    { label: "Searches Today", value: "156", change: "+23.1%", icon: Search, color: "text-purple-400" },
-    { label: "Active Campaigns", value: "8", change: "+2", icon: Megaphone, color: "text-orange-400" },
+    { label: "Total Leads", value: value(totals?.leads), trend: data?.trends.leads ?? null, icon: Users, color: "text-blue-400" },
+    { label: "Verified Emails", value: value(totals?.verifiedEmails), trend: data?.trends.verifiedEmails ?? null, icon: Mail, color: "text-emerald-400" },
+    { label: "Searches Today", value: value(totals?.searchesToday), trend: data?.trends.searches ?? null, icon: Search, color: "text-purple-400" },
+    { label: "Active Campaigns", value: value(totals?.activeCampaigns), trend: data?.trends.campaigns ?? null, icon: Megaphone, color: "text-orange-400" },
   ]
 
-  const recentActivity = [
-    { action: "New lead found", detail: "Sarah Chen — CloudSync", time: "2 min ago", type: "lead" },
-    { action: "Email verified", detail: "james@techcorp.io — Valid", time: "5 min ago", type: "verify" },
-    { action: "Research completed", detail: "Tesla Inc. — Full profile", time: "12 min ago", type: "research" },
-    { action: "Campaign sent", detail: "Q4 Outreach — 45 emails", time: "1 hour ago", type: "campaign" },
-    { action: "Export completed", detail: "1,234 leads to CSV", time: "2 hours ago", type: "export" },
-    { action: "New lead found", detail: "Mike Johnson — DataVault", time: "3 hours ago", type: "lead" },
-  ]
-
-  const topSources = [
-    { name: "LinkedIn", leads: 4523, percentage: 35 },
-    { name: "Web Search", leads: 3211, percentage: 25 },
-    { name: "Crunchbase", leads: 1934, percentage: 15 },
-    { name: "GitHub", leads: 1289, percentage: 10 },
-    { name: "Google Maps", leads: 967, percentage: 7.5 },
-    { name: "Other", leads: 923, percentage: 7.5 },
-  ]
+  const recentActivity = data?.recentActivity ?? []
+  const topSources = data?.sources ?? []
+  const monthly = data?.monthly ?? []
+  const peakMonthly = Math.max(1, ...monthly.map((month) => month.leads))
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Dashboard</h1>
-          <p className="text-zinc-400 text-sm mt-1">Welcome back! Here&apos;s your lead generation overview.</p>
+          <p className="text-zinc-400 text-sm mt-1">
+            Live counts from the database
+            {data?.generatedAt ? ` — updated ${new Date(data.generatedAt).toLocaleTimeString()}` : ""}.
+          </p>
         </div>
         <div className="flex gap-2">
           <Link href="/chat">
@@ -56,6 +123,14 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {error && (
+        <Card className="bg-red-500/10 border-red-500/30">
+          <CardContent className="p-4 text-sm text-red-300">
+            Could not load stats ({error}). This dashboard reads /api/stats — the API or the database is unreachable.
+          </CardContent>
+        </Card>
+      )}
+
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {stats.map((stat) => (
@@ -66,11 +141,7 @@ export default function DashboardPage() {
                 <stat.icon className={`w-4 h-4 ${stat.color}`} />
               </div>
               <div className="text-2xl font-bold">{stat.value}</div>
-              <div className="flex items-center gap-1 mt-1">
-                <ArrowUpRight className="w-3 h-3 text-emerald-400" />
-                <span className="text-xs text-emerald-400">{stat.change}</span>
-                <span className="text-xs text-zinc-500">vs last week</span>
-              </div>
+              <TrendLabel value={stat.trend} />
             </CardContent>
           </Card>
         ))}
@@ -82,25 +153,34 @@ export default function DashboardPage() {
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <CardTitle className="text-base">Recent Activity</CardTitle>
-              <Button variant="ghost" size="sm" className="text-zinc-400 hover:text-white">
-                View All
-              </Button>
+              <span className="text-xs text-zinc-500">
+                {totals ? `${totals.searchesTotal} search${totals.searchesTotal === 1 ? "" : "es"} recorded` : ""}
+              </span>
             </div>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
+              {recentActivity.length === 0 && (
+                <p className="text-sm text-zinc-500 py-6 text-center">
+                  Nothing yet. Run a search in{" "}
+                  <Link href="/chat" className="text-blue-400 hover:underline">
+                    AI Chat
+                  </Link>{" "}
+                  — every search and every lead is recorded here.
+                </p>
+              )}
               {recentActivity.map((activity, i) => (
                 <div key={i} className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/5 transition">
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
                     activity.type === "lead" ? "bg-blue-500/20" :
                     activity.type === "verify" ? "bg-emerald-500/20" :
-                    activity.type === "research" ? "bg-purple-500/20" :
+                    activity.type === "search" ? "bg-purple-500/20" :
                     activity.type === "campaign" ? "bg-orange-500/20" :
                     "bg-zinc-500/20"
                   }`}>
                     {activity.type === "lead" ? <Users className="w-4 h-4 text-blue-400" /> :
                      activity.type === "verify" ? <Mail className="w-4 h-4 text-emerald-400" /> :
-                     activity.type === "research" ? <Eye className="w-4 h-4 text-purple-400" /> :
+                     activity.type === "search" ? <Eye className="w-4 h-4 text-purple-400" /> :
                      activity.type === "campaign" ? <Megaphone className="w-4 h-4 text-orange-400" /> :
                      <Download className="w-4 h-4 text-zinc-400" />}
                   </div>
@@ -122,6 +202,9 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
+              {topSources.length === 0 && (
+                <p className="text-sm text-zinc-500 py-6 text-center">No leads stored yet — sources appear as leads arrive.</p>
+              )}
               {topSources.map((source) => (
                 <div key={source.name}>
                   <div className="flex items-center justify-between text-sm mb-1">
@@ -150,7 +233,7 @@ export default function DashboardPage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <Link href="/chat">
               <Button variant="outline" className="w-full justify-start border-white/10 hover:bg-white/5">
-                <MessageSquare className="w-4 h-4 mr-2" /> AI Search
+                <MessageSquare className="w-4 h-4 mr-2" /> Lead Search
               </Button>
             </Link>
             <Link href="/dashboard/verify">
@@ -172,31 +255,33 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* Usage Chart Placeholder */}
+      {/* Leads per month */}
       <Card className="bg-[#0a0a0a] border-white/10">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
-            <CardTitle className="text-base">Usage Over Time</CardTitle>
-            <div className="flex gap-2">
-              <Badge variant="outline" className="border-white/10 text-zinc-400">7 days</Badge>
-              <Badge variant="outline" className="border-white/10 text-zinc-400">30 days</Badge>
-              <Badge className="bg-blue-500/20 text-blue-400 border-0">90 days</Badge>
-            </div>
+            <CardTitle className="text-base">Leads Over Time</CardTitle>
+            <Badge className="bg-blue-500/20 text-blue-400 border-0">last 12 months</Badge>
           </div>
         </CardHeader>
         <CardContent>
           <div className="h-48 flex items-end gap-2">
-            {[35, 45, 30, 60, 75, 55, 80, 65, 90, 70, 85, 95].map((h, i) => (
-              <div key={i} className="flex-1 flex flex-col items-center gap-1">
+            {monthly.map((month, i) => (
+              <div
+                key={i}
+                className="flex-1 flex flex-col items-center gap-1"
+                title={`${month.label} ${month.year}: ${month.leads} leads`}
+              >
                 <div
                   className="w-full rounded-t bg-gradient-to-t from-blue-500 to-emerald-500 opacity-80 hover:opacity-100 transition"
-                  style={{ height: `${h}%` }}
+                  style={{ height: `${month.leads === 0 ? 2 : Math.max(6, (month.leads / peakMonthly) * 100)}%` }}
                 />
-                <span className="text-[10px] text-zinc-600">
-                  {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][i]}
-                </span>
+                <span className="text-[10px] text-zinc-600">{month.label}</span>
               </div>
             ))}
+          </div>
+          <div className="flex justify-between mt-3 text-xs text-zinc-500">
+            <span>Peak month: {peakMonthly.toLocaleString()} leads</span>
+            <span>Total stored: {(totals?.leads ?? 0).toLocaleString()}</span>
           </div>
         </CardContent>
       </Card>

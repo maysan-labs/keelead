@@ -102,3 +102,16 @@ model Setting {
   key   String @unique
   value String // JSON value
 }
+
+// Maysan Labs: every search is recorded. Upstream showed "Searches Today: 156" from a
+// hardcoded constant; this table is what makes that number (and the activity feed) real.
+model SearchLog {
+  id         String   @id @default(cuid())
+  query      String
+  sources    String? // JSON array of source names that ran
+  leadsFound Int      @default(0)
+  leadsSaved Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}

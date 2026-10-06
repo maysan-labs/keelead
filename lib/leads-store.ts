@@ -1,0 +1,103 @@
+// Maysan Labs: the bridge between a search and the database.
+//
+// Upstream's /api/leads and /api/chat returned scraper results and threw them away, so the
+// Lead table stayed empty forever and every dashboard number was a hardcoded constant. Every
+// search now persists what it found (and what it did) so the UI, the exports and the API all
+// read the same real rows.
+import prisma from "@/lib/db"
+import type { Lead as EngineLead } from "@/lib/lead-engine"
+
+export interface SaveResult {
+  inserted: number
+  skipped: number
+  duplicates: string[]
+}
+
+/** Normalise the scraper's confidence (0-1 or 0-100) into the Lead.score column (0-100). */
+function toScore(confidence: number | undefined): number {
+  const c = typeof confidence === "number" && Number.isFinite(confidence) ? confidence : 0
+  const scaled = c <= 1 ? c * 100 : c
+  return Math.max(0, Math.min(100, Math.round(scaled)))
+}
+
+/**
+ * Persist scraped leads. Deduplicates on email, falling back to name+company, and never
+ * overwrites a row that is already there (a re-run must not reset status/notes/tags that a
+ * human or campaign has since set).
+ */
+export async function saveLeads(leads: EngineLead[], query: string): Promise<SaveResult> {
+  let inserted = 0
+  let skipped = 0
+  const duplicates: string[] = []
+
+  for (const lead of leads) {
+    const email = (lead.email || "").trim().toLowerCase() || null
+    const firstName = (lead.firstName || "").trim()
+    const lastName = (lead.lastName || "").trim()
+    const company = (lead.company || "").trim() || null
+
+    if (!email && !firstName && !lastName) {
+      skipped++
+      continue
+    }
+
+    try {
+      const existing = email
+        ? await prisma.lead.findFirst({ where: { email } })
+        : await prisma.lead.findFirst({ where: { firstName, lastName, company } })
+
+      if (existing) {
+        duplicates.push(email || `${firstName} ${lastName}`.trim())
+        skipped++
+        continue
+      }
+
+      await prisma.lead.create({
+        data: {
+          firstName: firstName || "-",
+          lastName: lastName || "-",
+          email,
+          phone: (lead.phone || "").trim() || null,
+          company,
+          title: (lead.title || "").trim() || null,
+          website: (lead.website || "").trim() || null,
+          linkedin: (lead.linkedin || "").trim() || null,
+          location: (lead.location || "").trim() || null,
+          source: (lead.source || "").trim() || null,
+          status: "new",
+          score: toScore(lead.confidence),
+          verified: false,
+          tags: lead.tags && lead.tags.length ? JSON.stringify(lead.tags) : null,
+          metadata: JSON.stringify({ query, importedAt: new Date().toISOString() }),
+        },
+      })
+      inserted++
+    } catch (error) {
+      console.error("saveLeads: could not persist a lead", error)
+      skipped++
+    }
+  }
+
+  return { inserted, skipped, duplicates }
+}
+
+/** Record a search so "Searches today" and the activity feed are real. Never fatal. */
+export async function logSearch(
+  query: string,
+  sources: string[],
+  leadsFound: number,
+  leadsSaved: number
+): Promise<void> {
+  try {
+    await prisma.searchLog.create({
+      data: {
+        query: (query || "").slice(0, 500),
+        sources: JSON.stringify(sources || []),
+        leadsFound,
+        leadsSaved,
+      },
+    })
+  } catch (error) {
+    console.error("logSearch failed (non-fatal)", error)
+  }
+}

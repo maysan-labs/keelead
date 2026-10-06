@@ -62,11 +62,80 @@ curl -sS -o /dev/null -w '%{http_code}\n' -u "$USER:$PASS" https://keelead.maysa
 `built_at` is baked into the image at build time, so it proves a deploy actually replaced the
 running image rather than merely reporting `done`.
 
+## Where the numbers come from (and what used to be fake)
+
+The upstream dashboard rendered `value: "12,847"`, a made-up activity feed ("Sarah Chen —
+CloudSync") and invented source bars as literals in the React components, and `/api/analytics`
+returned a second copy of the same fiction. `/api/export` claimed `count = 12847` and served a
+two-row sample CSV. This fork replaces all of it with counts over the real tables:
+
+* `lib/stats.ts` — totals, week-over-week trends, top sources, a 12-month series and the
+  activity feed, all from Prisma counts.
+* `GET /api/stats` — the dashboard summary (also what the Hermes client reads).
+* `GET /api/analytics` — campaign overview, source performance, conversion funnel.
+* `POST /api/leads` — runs the sources **and persists what they return** (dedupe on email, then
+  name+company; an existing row is never overwritten) and logs the search in `SearchLog`.
+* `GET /api/leads` — lists stored leads with `limit` / `offset` / `status` / `source` / `q`.
+* `GET /api/export?format=csv|json` — exports the stored rows (no more sample CSV).
+
+A fresh install reports zeros. That is the point: the numbers move only when something real
+happens. All of these routes are `force-dynamic` so Next can never prerender them at build time
+(which would bake in zeros from a database that does not exist in the builder stage).
+
+## Data sources: most of this repo fabricates people
+
+`GET /api/sources/probe?q=<query>&count=N` asks all 67 registered sources for leads and reports
+which ones actually return data. On this deployment **29 of them returned synthetic records** with
+the same fingerprint — a random first/last name, `contact0@<domain>`, a generated phone number,
+`confidence: 0.5 + Math.random() * 0.4` — without contacting any real service: Bing, Brave, Xing,
+AngelList, Crunchbase, Companies House, Glassdoor, Indeed, G2, Google Maps, Yelp, Foursquare,
+Thumbtack, HomeAdvisor, Twitter/X, Facebook, Instagram, TikTok, YouTube, Pinterest, Product Hunt,
+F6S, Gust, SAM.gov, Hunter.io, Clearbit, Eventbrite, Meetup, Luma. The engine's own built-in
+"sources" (Web Search, LinkedIn, Google Maps, Crunchbase, Yelp, Yellow Pages, Product Hunt,
+AngelList, Hunter) are the same kind of thing.
+
+Only real integrations are wired in (`lib/lead-engine/index.ts`):
+
+| Source | What it returns |
+|---|---|
+| GitHub (`github`, `github-orgs`) | users and organisations, public API |
+| DuckDuckGo (`duckduckgo`) | web results |
+| Stack Overflow (`stackoverflow`) | developer profiles |
+| Dev.to (`devto`) | developer authors |
+| ORCID (`orcid`) | researchers and research organisations |
+| Google Scholar (`google-scholar`) | academics |
+
+`wikidata`, `sec-edgar` and `opencorporates` stay enabled for company research/enrichment.
+Everything else is disabled in both the engine and the shared registry, so the UI cannot present
+a generator as an active source.
+
+**Re-run the probe after any upstream upgrade** before trusting a source list again, and never
+enable a source that invents its results: a call sheet full of non-existent people wastes the
+sales rep's day and burns sender reputation.
+
+## Operating it from Hermes
+
+`/opt/data/bin/keelead.py` is the client; credentials come from
+`/opt/data/state/keelead/creds.env` (mode 600) and are never printed.
+
+```sh
+keelead.py health                                     # /healthz
+keelead.py stats                                      # live counts
+keelead.py search "fintech companies in Pune" --count 25   # search + save
+keelead.py leads --limit 50 --status new              # read the database
+keelead.py export --format csv --out /tmp/leads.csv   # export
+keelead.py sources --query "digital agency"           # which sources are real
+```
+
 ## Known gaps
 
-* The AI chat route does not call a provider yet — it answers from a canned intent parser. The
-  provider env vars (`CUSTOM_AI_*` etc.) are declared and wired for when that path lands.
-* Several data sources are placeholder implementations upstream; expect empty results from some.
-* No seed data is loaded in production (`npm run db:seed`) — the dashboard starts empty.
-* Credentials are single-user HTTP Basic. Replace with real per-user auth if this is ever exposed
+* The AI chat route still does not call a provider — it answers from the canned intent parser in
+  `app/api/chat/route.ts`. `lib/ai/index.ts` defines the providers and `CUSTOM_AI_*` is wired to
+  DeepSeek in the Dokploy env, but nothing constructs a provider yet, so the chat surface is
+  rule-based until that path is implemented.
+* Sends/opens/replies have no history table, so those metrics read 0 / "—" rather than a number.
+  Adding campaign send + click tracking is the next real step.
+* Key-gated aggregators (Apollo, Hunter, Clearbit) are not wired; result quality depends on the
+  public sources above.
+* Credentials are single-user HTTP Basic. Replace with per-user auth if this is ever exposed
   beyond Maysan Labs.

@@ -1,61 +1,99 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import {
-  BarChart3, TrendingUp, TrendingDown, Users, Mail, Eye,
-  MousePointerClick, Reply, ArrowUpRight, ArrowDownRight,
-  Globe, Search, Building2, Github, MapPin, Calendar,
-  Download, Filter, RefreshCw
+  TrendingUp, Users, Mail, Eye, MousePointerClick, Reply,
+  ArrowUpRight, ArrowDownRight, Globe, Search, Building2, Github, MapPin, Download
 } from "lucide-react"
+
+// Maysan Labs: upstream shipped this page with invented figures (12,847 leads, 47.3% open
+// rate, weekly bars). Everything here is computed from the database by /api/analytics; a
+// metric with no supporting table yet shows 0 / "—" rather than a made-up number.
+interface AnalyticsPayload {
+  generatedAt: string
+  overview: {
+    totalLeads: number
+    totalEmailsSent: number
+    openRate: number
+    replyRate: number
+    clickRate: number
+    conversionRate: number
+  }
+  trends: { leads: number | null; emails: number | null; opens: number | null; replies: number | null }
+  sourcePerformance: { source: string; leads: number; emails: number; opens: number; replies: number; convRate: number }[]
+  funnel: { stage: string; count: number; percentage: number; color: string }[]
+  weekly: { week: string; leads: number; emails: number; opens: number; replies: number }[]
+  counts: { verifications: number; campaignCount: number; previousWeekLeads: number }
+}
+
+function change(value: number | null): { label: string; up: boolean } {
+  if (value === null) return { label: "—", up: true }
+  return { label: `${value >= 0 ? "+" : ""}${value}%`, up: value >= 0 }
+}
+
+function sourceIcon(source: string) {
+  const name = source.toLowerCase()
+  if (name.includes("github")) return <Github className="w-4 h-4" />
+  if (name.includes("linkedin")) return <Users className="w-4 h-4" />
+  if (name.includes("map") || name.includes("openstreetmap")) return <MapPin className="w-4 h-4" />
+  if (name.includes("crunchbase") || name.includes("company")) return <Building2 className="w-4 h-4" />
+  if (name.includes("search") || name.includes("bing") || name.includes("duckduckgo")) return <Globe className="w-4 h-4" />
+  return <Search className="w-4 h-4" />
+}
 
 export default function AnalyticsPage() {
   const [dateRange, setDateRange] = useState("30d")
+  const [data, setData] = useState<AnalyticsPayload | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    fetch("/api/analytics", { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return response.json()
+      })
+      .then((json: AnalyticsPayload) => {
+        if (alive) setData(json)
+      })
+      .catch((err) => {
+        if (alive) setError(String(err))
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const overview = data?.overview
+  const loading = !data && !error
+  const num = (n: number | undefined, suffix = "") => (loading ? "…" : `${(n ?? 0).toLocaleString()}${suffix}`)
 
   const overviewStats = [
-    { label: "Total Leads", value: "12,847", change: "+12.5%", up: true, icon: <Users className="w-4 h-4 text-blue-400" /> },
-    { label: "Emails Sent", value: "8,432", change: "+23.1%", up: true, icon: <Mail className="w-4 h-4 text-purple-400" /> },
-    { label: "Open Rate", value: "47.3%", change: "+5.2%", up: true, icon: <Eye className="w-4 h-4 text-emerald-400" /> },
-    { label: "Reply Rate", value: "14.8%", change: "-1.3%", up: false, icon: <Reply className="w-4 h-4 text-orange-400" /> },
-    { label: "Click Rate", value: "8.2%", change: "+2.1%", up: true, icon: <MousePointerClick className="w-4 h-4 text-yellow-400" /> },
-    { label: "Conversion", value: "3.4%", change: "+0.8%", up: true, icon: <TrendingUp className="w-4 h-4 text-green-400" /> },
+    { label: "Total Leads", value: num(overview?.totalLeads), trend: change(data?.trends.leads ?? null), icon: <Users className="w-4 h-4 text-blue-400" /> },
+    { label: "Emails Sent", value: num(overview?.totalEmailsSent), trend: change(data?.trends.emails ?? null), icon: <Mail className="w-4 h-4 text-purple-400" /> },
+    { label: "Open Rate", value: num(overview?.openRate, "%"), trend: change(null), icon: <Eye className="w-4 h-4 text-emerald-400" /> },
+    { label: "Reply Rate", value: num(overview?.replyRate, "%"), trend: change(null), icon: <Reply className="w-4 h-4 text-orange-400" /> },
+    { label: "Click Rate", value: num(overview?.clickRate, "%"), trend: change(null), icon: <MousePointerClick className="w-4 h-4 text-yellow-400" /> },
+    { label: "Conversion", value: num(overview?.conversionRate, "%"), trend: change(null), icon: <TrendingUp className="w-4 h-4 text-green-400" /> },
   ]
 
-  const sourcePerformance = [
-    { source: "LinkedIn", leads: 4523, emails: 2345, opens: 1234, replies: 234, convRate: 5.2, icon: <Users className="w-4 h-4" /> },
-    { source: "Web Search", leads: 3211, emails: 1890, opens: 945, replies: 156, convRate: 3.8, icon: <Globe className="w-4 h-4" /> },
-    { source: "Crunchbase", leads: 1934, emails: 1200, opens: 672, replies: 134, convRate: 4.5, icon: <Building2 className="w-4 h-4" /> },
-    { source: "GitHub", leads: 1289, emails: 800, opens: 360, replies: 72, convRate: 2.9, icon: <Github className="w-4 h-4" /> },
-    { source: "Google Maps", leads: 967, emails: 600, opens: 318, replies: 48, convRate: 3.1, icon: <MapPin className="w-4 h-4" /> },
-    { source: "Hunter.io", leads: 623, emails: 400, opens: 204, replies: 38, convRate: 4.1, icon: <Search className="w-4 h-4" /> },
-  ]
-
-  const funnelStages = [
-    { stage: "Total Leads", count: 12847, percentage: 100, color: "bg-blue-500" },
-    { stage: "Contacted", count: 8432, percentage: 65.6, color: "bg-purple-500" },
-    { stage: "Opened", count: 3989, percentage: 31.0, color: "bg-yellow-500" },
-    { stage: "Clicked", count: 1056, percentage: 8.2, color: "bg-orange-500" },
-    { stage: "Replied", count: 1248, percentage: 9.7, color: "bg-emerald-500" },
-    { stage: "Qualified", count: 514, percentage: 4.0, color: "bg-green-500" },
-    { stage: "Converted", count: 437, percentage: 3.4, color: "bg-emerald-400" },
-  ]
-
-  const weeklyData = [
-    { week: "W1", leads: 320, emails: 210, opens: 98, replies: 21 },
-    { week: "W2", leads: 410, emails: 280, opens: 134, replies: 28 },
-    { week: "W3", leads: 380, emails: 310, opens: 156, replies: 35 },
-    { week: "W4", leads: 520, emails: 390, opens: 189, replies: 42 },
-  ]
+  const sourcePerformance = data?.sourcePerformance ?? []
+  const funnelStages = data?.funnel ?? []
+  const weeklyData = data?.weekly ?? []
+  const weeklyPeak = Math.max(1, ...weeklyData.map((week) => week.leads))
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Analytics</h1>
-          <p className="text-zinc-400 text-sm mt-1">Campaign performance, source breakdown, and conversion funnels.</p>
+          <p className="text-zinc-400 text-sm mt-1">
+            Straight from the database — leads, sources and campaign rows
+            {data?.generatedAt ? ` (updated ${new Date(data.generatedAt).toLocaleTimeString()})` : ""}.
+          </p>
         </div>
         <div className="flex gap-2">
           {["7d", "30d", "90d", "1y"].map((range) => (
@@ -75,6 +113,16 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
+      {error && (
+        <Card className="bg-red-500/10 border-red-500/30">
+          <CardContent className="p-4 text-sm text-red-300">Could not load analytics ({error}).</CardContent>
+        </Card>
+      )}
+
+      <p className="text-xs text-zinc-500">
+        Figures are all-time totals. The range buttons are visual only until per-day send/open history is tracked.
+      </p>
+
       {/* Overview Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {overviewStats.map((stat) => (
@@ -83,12 +131,12 @@ export default function AnalyticsPage() {
               <div className="flex items-center gap-2 text-zinc-400 text-xs mb-1">{stat.icon} {stat.label}</div>
               <div className="text-xl font-bold">{stat.value}</div>
               <div className="flex items-center gap-1 mt-1">
-                {stat.up ? (
+                {stat.trend.up ? (
                   <ArrowUpRight className="w-3 h-3 text-emerald-400" />
                 ) : (
                   <ArrowDownRight className="w-3 h-3 text-red-400" />
                 )}
-                <span className={`text-xs ${stat.up ? "text-emerald-400" : "text-red-400"}`}>{stat.change}</span>
+                <span className={`text-xs ${stat.trend.up ? "text-emerald-400" : "text-red-400"}`}>{stat.trend.label}</span>
               </div>
             </CardContent>
           </Card>
@@ -115,11 +163,18 @@ export default function AnalyticsPage() {
                   </tr>
                 </thead>
                 <tbody>
+                  {sourcePerformance.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="p-6 text-center text-zinc-500 text-sm">
+                        No leads stored yet. Run a search — each source that returns results shows up here.
+                      </td>
+                    </tr>
+                  )}
                   {sourcePerformance.map((source) => (
                     <tr key={source.source} className="border-b border-white/5">
                       <td className="p-2 flex items-center gap-2">
                         <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-zinc-400">
-                          {source.icon}
+                          {sourceIcon(source.source)}
                         </div>
                         {source.source}
                       </td>
@@ -147,7 +202,7 @@ export default function AnalyticsPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {funnelStages.map((stage, i) => (
+              {funnelStages.map((stage) => (
                 <div key={stage.stage}>
                   <div className="flex items-center justify-between text-xs mb-1">
                     <span className="text-zinc-400">{stage.stage}</span>
@@ -156,7 +211,7 @@ export default function AnalyticsPage() {
                   <div className="h-6 bg-white/5 rounded-lg overflow-hidden">
                     <div
                       className={`h-full ${stage.color} opacity-80 rounded-lg flex items-center justify-end pr-2`}
-                      style={{ width: `${stage.percentage}%` }}
+                      style={{ width: `${Math.max(stage.percentage, 2)}%` }}
                     >
                       <span className="text-[10px] font-bold">{stage.percentage}%</span>
                     </div>
@@ -164,6 +219,11 @@ export default function AnalyticsPage() {
                 </div>
               ))}
             </div>
+            <p className="text-xs text-zinc-500 mt-4">
+              {data?.counts
+                ? `${data.counts.campaignCount} campaign(s), ${data.counts.verifications} verification(s) recorded.`
+                : ""}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -171,17 +231,18 @@ export default function AnalyticsPage() {
       {/* Weekly Trend */}
       <Card className="bg-[#0a0a0a] border-white/10">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Weekly Trend</CardTitle>
+          <CardTitle className="text-base">Weekly Trend (leads stored per week)</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="h-48 flex items-end gap-8 px-4">
             {weeklyData.map((week) => (
               <div key={week.week} className="flex-1 flex flex-col items-center gap-2">
                 <div className="w-full flex gap-1 items-end" style={{ height: "140px" }}>
-                  <div className="flex-1 bg-blue-500 rounded-t" style={{ height: `${(week.leads / 520) * 100}%` }} />
-                  <div className="flex-1 bg-purple-500 rounded-t" style={{ height: `${(week.emails / 520) * 100}%` }} />
-                  <div className="flex-1 bg-emerald-500 rounded-t" style={{ height: `${(week.opens / 520) * 100}%` }} />
-                  <div className="flex-1 bg-orange-500 rounded-t" style={{ height: `${(week.replies / 520) * 100}%` }} />
+                  <div
+                    className="flex-1 bg-blue-500 rounded-t"
+                    title={`${week.leads} leads`}
+                    style={{ height: `${week.leads === 0 ? 2 : Math.max(6, (week.leads / weeklyPeak) * 100)}%` }}
+                  />
                 </div>
                 <span className="text-xs text-zinc-400">{week.week}</span>
               </div>
@@ -191,14 +252,8 @@ export default function AnalyticsPage() {
             <span className="flex items-center gap-1.5 text-xs text-zinc-400">
               <div className="w-2.5 h-2.5 rounded bg-blue-500" /> Leads
             </span>
-            <span className="flex items-center gap-1.5 text-xs text-zinc-400">
-              <div className="w-2.5 h-2.5 rounded bg-purple-500" /> Sent
-            </span>
-            <span className="flex items-center gap-1.5 text-xs text-zinc-400">
-              <div className="w-2.5 h-2.5 rounded bg-emerald-500" /> Opens
-            </span>
-            <span className="flex items-center gap-1.5 text-xs text-zinc-400">
-              <div className="w-2.5 h-2.5 rounded bg-orange-500" /> Replies
+            <span className="text-xs text-zinc-500">
+              Sent / opens / replies appear once campaign sends are tracked.
             </span>
           </div>
         </CardContent>

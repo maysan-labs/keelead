@@ -1,5 +1,7 @@
 // Lead Generation Engine - Multi-source orchestrator
 import { LeadIntent } from "@/lib/ai"
+import { sourceManager } from "@/lib/sources"
+import type { Lead as SourceLead, SearchOptions as SourceSearchOptions } from "@/lib/sources/types"
 
 export interface Lead {
   id?: string
@@ -316,6 +318,63 @@ function generateEmailPatternLeads(query: string, params: Record<string, string>
 }
 
 // Source registry
+// Maysan Labs — which sources are allowed to produce leads in production.
+//
+// The ten built-in classes below are DEMO GENERATORS: they invent people (random first/last
+// names, `contact0@<domain>` emails, generated phone numbers) and never call a real service.
+// The /api/sources/probe endpoint on this deployment showed 29 of the repo's 67 sources
+// behaving that way. Writing them into the lead database would fill the sales pipeline with
+// people who do not exist — a wasted call sheet and a deliverability risk — so they are
+// disabled and only sources that returned real records for a plain lead query are wired in.
+// Re-run the probe after any upstream upgrade before trusting a source list again.
+const PRODUCTION_SOURCE_IDS = [
+  "github", // GitHub users (public API)
+  "github-orgs", // GitHub organisations (public API)
+  "duckduckgo", // web results
+  "stackoverflow", // developer profiles (public API)
+  "devto", // developer articles/authors (public API)
+  "orcid", // researchers and research organisations (public API)
+  "google-scholar", // academics
+]
+
+// Real company-data sources used by research/enrichment rather than people search.
+const PRODUCTION_COMPANY_SOURCE_IDS = ["wikidata", "sec-edgar", "opencorporates"]
+
+function adaptRegistrySource(id: string): DataSource | null {
+  const source = sourceManager.get(id)
+  if (!source) return null
+  return {
+    name: source.name,
+    type: "api",
+    enabled: true,
+    async search(query: string, params: Record<string, string>): Promise<Lead[]> {
+      const options: SourceSearchOptions = {
+        count: parseInt(params.count, 10) || 25,
+        location: params.location,
+        industry: params.industry,
+      }
+      const leads: SourceLead[] = await source.search(query, options)
+      return leads.map((lead) => ({
+        id: lead.id,
+        firstName: lead.firstName || "",
+        lastName: lead.lastName || "",
+        email: lead.email,
+        phone: lead.phone,
+        company: lead.company,
+        title: lead.title,
+        website: lead.website,
+        linkedin: lead.linkedin,
+        location: lead.location,
+        source: source.name,
+        confidence: lead.confidence ?? 0.5,
+        verified: lead.verified,
+        tags: lead.tags,
+        metadata: lead.metadata,
+      }))
+    },
+  }
+}
+
 const SOURCES: DataSource[] = [
   new WebSearchSource(),
   new GitHubSource(),
@@ -328,6 +387,17 @@ const SOURCES: DataSource[] = [
   new ProductHuntSource(),
   new AngelListSource(),
 ]
+
+// Every built-in is a generator: switch it off, then add the real sources.
+for (const source of SOURCES) source.enabled = false
+SOURCES.push(...PRODUCTION_SOURCE_IDS.map(adaptRegistrySource).filter((s): s is DataSource => s !== null))
+
+// Keep the shared registry view honest too, so the UI and /api/sources show the same truth
+// about which sources are allowed to run.
+const ALLOWED_IDS = [...PRODUCTION_SOURCE_IDS, ...PRODUCTION_COMPANY_SOURCE_IDS]
+for (const source of sourceManager.getAll()) {
+  source.enabled = ALLOWED_IDS.includes(source.id)
+}
 
 // Main search orchestrator
 export async function searchLeads(intent: LeadIntent): Promise<SearchResult> {

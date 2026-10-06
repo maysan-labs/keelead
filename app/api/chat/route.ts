@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { searchLeads } from "@/lib/lead-engine"
 import { parseLeadIntent, LEAD_GEN_SYSTEM_PROMPT } from "@/lib/ai"
+import { saveLeads, logSearch } from "@/lib/leads-store"
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,6 +15,10 @@ export async function POST(request: NextRequest) {
       const results = await searchLeads(intent)
       const leadCount = results.leads.length
       const sources = results.sources.join(", ")
+
+      // Maysan Labs: persist what the search found, and record that it ran.
+      const saved = await saveLeads(results.leads, results.query || message)
+      await logSearch(results.query || message, results.sources, results.total, saved.inserted)
 
       let content = `I found **${leadCount} leads** matching your query.\n\n`
       if (results.leads.length > 0) {
