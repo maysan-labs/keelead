@@ -168,6 +168,30 @@ async function main() {
   check("the report still refuses to claim an erasure workflow", item("erasure")?.status, "not_recorded")
   check("report counts agree with the tables", [report.counts.leads, report.counts.consentRecords, report.counts.activities > 0], [storedRows, 1, true])
 
+  // ---------------------------------------------------------------- campaigns: real rows, validated writes
+  const campaigns = await import("@/app/api/campaigns/route")
+  const asRequest = (body: unknown) =>
+    new Request("http://localhost/api/campaigns", { method: "POST", body: JSON.stringify(body) }) as never
+
+  check("GET /api/campaigns starts empty (no invented rows)", (await (await campaigns.GET(new Request("http://localhost/api/campaigns") as never)).json()).total, 0)
+  check("a campaign without a name is refused", (await campaigns.POST(asRequest({ status: "active" }))).status, 400)
+  check("an unknown status is refused, naming the valid ones", (await campaigns.POST(asRequest({ name: "X", status: "live" }))).status, 400)
+  check("a negative target is refused", (await campaigns.POST(asRequest({ name: "X", targetLeads: -5 }))).status, 400)
+
+  const created = await campaigns.POST(asRequest({ name: "Mumbai clinics - October", type: "phone", targetLeads: 25 }))
+  const createdBody = await created.json()
+  check("a valid campaign is created", [created.status, createdBody.name, createdBody.status, createdBody.targetLeads], [201, "Mumbai clinics - October", "draft", 25])
+  check("a new campaign has no open rate to report", createdBody.openRate, 0)
+
+  const listed = await (await campaigns.GET(new Request("http://localhost/api/campaigns") as never)).json()
+  check("the created campaign is listed with its real lead count", [listed.total, listed.campaigns[0]._count.leads], [1, 0])
+
+  const missing = await campaigns.PATCH(new Request("http://localhost/api/campaigns", { method: "PATCH", body: JSON.stringify({ id: "nope", status: "active" }) }) as never)
+  check("patching an unknown campaign is a 404", missing.status, 404)
+  const moved = await campaigns.PATCH(new Request("http://localhost/api/campaigns", { method: "PATCH", body: JSON.stringify({ id: createdBody.id, status: "active" }) }) as never)
+  check("a campaign status change is persisted", [(await moved.json()).status, (await (await campaigns.GET(new Request("http://localhost/api/campaigns?status=active") as never)).json()).total], ["active", 1])
+  check("filtering by an unknown status is a 400", (await campaigns.GET(new Request("http://localhost/api/campaigns?status=live") as never)).status, 400)
+
   // ---------------------------------------------------------------- export path via the route
   const csv = await (await import("@/app/api/export/route")).GET(new Request("http://localhost/api/export?format=csv") as never)
   const body = await csv.text()
