@@ -1,81 +1,212 @@
-// OpenStreetMap — Free Local Business Data via Overpass API + Nominatim
-// Completely free, no API key required, worldwide coverage
+// OpenStreetMap — Free local business data via Overpass API + Nominatim.
+// Completely free, no API key required, worldwide coverage.
+//
+// This is the source that answers "businesses of type X in place Y" — a clinic search must find
+// clinics. Two rules are load-bearing and both were violated upstream:
+//
+//   1. Type matching is on WORD BOUNDARIES, longest phrase first. The old substring match turned
+//      "healthcare clinics" into `shop=car` (because "care" contains "car"), so a clinic search
+//      returned car showrooms. Partial/substring matching against a short key is always a bug.
+//   2. One business type maps to SEVERAL OSM tags (a clinic is `amenity=clinic` for some mappers
+//      and `healthcare=clinic` for others). The Overpass query unions every tag pair for the type.
+//
+// Leads that come out of here are marked `metadata.match = "attested"`: the element matched both
+// the requested type and the requested place inside Overpass itself, so the engine's relevance
+// gate passes them without a keyword test (a business named "SK Wheels" is a legitimate clinic
+// match only if Overpass said amenity=clinic — a naive keyword test would drop it wrongly).
 import { BaseSource } from "../base"
 import type { Lead, SearchOptions, CompanyData, ContactData } from "../types"
 
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 const OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-const USER_AGENT = "KeeLead/1.0 (lead-generation-tool)"
+// Nominatim's usage policy requires a User-Agent that identifies the application and a contact.
+const USER_AGENT = "KeeLead/1.0 (+https://keelead.maysanlabs.com; lead-generation)"
 
-// Common business type mappings for smart query parsing
-const BUSINESS_TYPE_MAP: Record<string, { tag: string; value: string }> = {
-  // Food & Drink
-  restaurant: { tag: "amenity", value: "restaurant" },
-  restaurants: { tag: "amenity", value: "restaurant" },
-  cafe: { tag: "amenity", value: "cafe" },
-  cafes: { tag: "amenity", value: "cafe" },
-  "coffee shop": { tag: "amenity", value: "cafe" },
-  "coffee shops": { tag: "amenity", value: "cafe" },
-  bar: { tag: "amenity", value: "bar" },
-  bars: { tag: "amenity", value: "bar" },
-  pub: { tag: "amenity", value: "pub" },
-  pubs: { tag: "amenity", value: "pub" },
-  bakery: { tag: "shop", value: "bakery" },
-  bakeries: { tag: "shop", value: "bakery" },
-  pizza: { tag: "amenity", value: "restaurant" },
-  sushi: { tag: "amenity", value: "restaurant" },
-  // Services
-  plumber: { tag: "office", value: "plumber" },
-  plumbers: { tag: "office", value: "plumber" },
-  dentist: { tag: "amenity", value: "dentist" },
-  dentists: { tag: "amenity", value: "dentist" },
-  doctor: { tag: "amenity", value: "doctors" },
-  doctors: { tag: "amenity", value: "doctors" },
-  pharmacy: { tag: "amenity", value: "pharmacy" },
-  pharmacies: { tag: "amenity", value: "pharmacy" },
-  hospital: { tag: "amenity", value: "hospital" },
-  hospitals: { tag: "amenity", value: "hospital" },
-  bank: { tag: "amenity", value: "bank" },
-  banks: { tag: "amenity", value: "bank" },
-  hotel: { tag: "tourism", value: "hotel" },
-  hotels: { tag: "tourism", value: "hotel" },
-  gym: { tag: "leisure", value: "fitness_centre" },
-  gyms: { tag: "leisure", value: "fitness_centre" },
-  salon: { tag: "shop", value: "hairdresser" },
-  salons: { tag: "shop", value: "hairdresser" },
-  "hair salon": { tag: "shop", value: "hairdresser" },
+export interface OsmTag {
+  key: string
+  value: string
+}
+
+export interface BusinessType {
+  /** Human label used in lead titles and the UI. */
+  label: string
+  /** Every OSM tag combination that means this business type, unioned in Overpass. */
+  tags: OsmTag[]
+}
+
+const t = (key: string, ...values: string[]): OsmTag[] => values.map((value) => ({ key, value }))
+
+/** Phrase -> business type. Keys are matched on word boundaries, longest key wins. */
+const BUSINESS_TYPE_MAP: Record<string, BusinessType> = {
+  // Food & drink
+  restaurant: { label: "Restaurant", tags: t("amenity", "restaurant") },
+  restaurants: { label: "Restaurant", tags: t("amenity", "restaurant") },
+  cafe: { label: "Cafe", tags: t("amenity", "cafe") },
+  cafes: { label: "Cafe", tags: t("amenity", "cafe") },
+  "coffee shop": { label: "Cafe", tags: t("amenity", "cafe") },
+  "coffee shops": { label: "Cafe", tags: t("amenity", "cafe") },
+  bar: { label: "Bar", tags: t("amenity", "bar") },
+  bars: { label: "Bar", tags: t("amenity", "bar") },
+  pub: { label: "Pub", tags: t("amenity", "pub") },
+  bakery: { label: "Bakery", tags: t("shop", "bakery") },
+  // Healthcare — the case that motivated this table
+  clinic: { label: "Clinic", tags: [...t("amenity", "clinic"), ...t("healthcare", "clinic")] },
+  clinics: { label: "Clinic", tags: [...t("amenity", "clinic"), ...t("healthcare", "clinic")] },
+  "medical clinic": { label: "Clinic", tags: [...t("amenity", "clinic"), ...t("healthcare", "clinic")] },
+  "healthcare clinic": { label: "Clinic", tags: [...t("amenity", "clinic"), ...t("healthcare", "clinic")] },
+  "polyclinic": { label: "Clinic", tags: [...t("amenity", "clinic"), ...t("healthcare", "clinic")] },
+  "nursing home": { label: "Hospital", tags: [...t("amenity", "hospital"), ...t("healthcare", "hospital")] },
+  hospital: { label: "Hospital", tags: [...t("amenity", "hospital"), ...t("healthcare", "hospital")] },
+  hospitals: { label: "Hospital", tags: [...t("amenity", "hospital"), ...t("healthcare", "hospital")] },
+  doctor: { label: "Doctor", tags: [...t("amenity", "doctors"), ...t("healthcare", "doctor")] },
+  doctors: { label: "Doctor", tags: [...t("amenity", "doctors"), ...t("healthcare", "doctor")] },
+  physician: { label: "Doctor", tags: [...t("amenity", "doctors"), ...t("healthcare", "doctor")] },
+  "general physician": { label: "Doctor", tags: [...t("amenity", "doctors"), ...t("healthcare", "doctor")] },
+  dentist: { label: "Dentist", tags: [...t("amenity", "dentist"), ...t("healthcare", "dentist")] },
+  dentists: { label: "Dentist", tags: [...t("amenity", "dentist"), ...t("healthcare", "dentist")] },
+  "dental clinic": { label: "Dentist", tags: [...t("amenity", "dentist"), ...t("healthcare", "dentist")] },
+  physiotherapist: { label: "Physiotherapist", tags: t("healthcare", "physiotherapist") },
+  physiotherapy: { label: "Physiotherapist", tags: t("healthcare", "physiotherapist") },
+  "diagnostic lab": { label: "Diagnostic Laboratory", tags: t("healthcare", "laboratory") },
+  "diagnostic centre": { label: "Diagnostic Laboratory", tags: t("healthcare", "laboratory") },
+  laboratory: { label: "Laboratory", tags: t("healthcare", "laboratory") },
+  pharmacy: { label: "Pharmacy", tags: t("amenity", "pharmacy") },
+  pharmacies: { label: "Pharmacy", tags: t("amenity", "pharmacy") },
+  "medical store": { label: "Pharmacy", tags: t("amenity", "pharmacy") },
+  chemist: { label: "Pharmacy", tags: t("amenity", "pharmacy") },
+  "veterinary clinic": { label: "Veterinary", tags: t("amenity", "veterinary") },
+  veterinarian: { label: "Veterinary", tags: t("amenity", "veterinary") },
+  optician: { label: "Optician", tags: t("shop", "optician") },
+  "optical store": { label: "Optician", tags: t("shop", "optician") },
+  // Local services
+  plumber: { label: "Plumber", tags: t("office", "plumber") },
+  plumbers: { label: "Plumber", tags: t("office", "plumber") },
+  electrician: { label: "Electrician", tags: t("craft", "electrician") },
+  electricians: { label: "Electrician", tags: t("craft", "electrician") },
+  salon: { label: "Salon", tags: t("shop", "hairdresser") },
+  salons: { label: "Salon", tags: t("shop", "hairdresser") },
+  "hair salon": { label: "Salon", tags: t("shop", "hairdresser") },
+  "beauty parlour": { label: "Salon", tags: t("shop", "beauty") },
+  "beauty parlor": { label: "Salon", tags: t("shop", "beauty") },
+  gym: { label: "Gym", tags: t("leisure", "fitness_centre") },
+  gyms: { label: "Gym", tags: t("leisure", "fitness_centre") },
+  "fitness centre": { label: "Gym", tags: t("leisure", "fitness_centre") },
+  hotel: { label: "Hotel", tags: t("tourism", "hotel") },
+  hotels: { label: "Hotel", tags: t("tourism", "hotel") },
+  "travel agency": { label: "Travel Agency", tags: t("shop", "travel_agency") },
+  "courier service": { label: "Courier", tags: t("office", "courier") },
   // Retail
-  supermarket: { tag: "shop", value: "supermarket" },
-  supermarkets: { tag: "shop", value: "supermarket" },
-  grocery: { tag: "shop", value: "supermarket" },
-  groceries: { tag: "shop", value: "supermarket" },
-  bookstore: { tag: "shop", value: "books" },
-  bookstores: { tag: "shop", value: "books" },
-  bookshop: { tag: "shop", value: "books" },
-  clothing: { tag: "shop", value: "clothes" },
-  electronics: { tag: "shop", value: "electronics" },
-  furniture: { tag: "shop", value: "furniture" },
-  // Professional
-  lawyer: { tag: "office", value: "lawyer" },
-  lawyers: { tag: "office", value: "lawyer" },
-  attorney: { tag: "office", value: "lawyer" },
-  "real estate": { tag: "office", value: "estate_agent" },
-  "real estate agent": { tag: "office", value: "estate_agent" },
-  architect: { tag: "office", value: "architect" },
-  architects: { tag: "office", value: "architect" },
-  accountant: { tag: "office", value: "accountant" },
-  accountants: { tag: "office", value: "accountant" },
+  supermarket: { label: "Supermarket", tags: t("shop", "supermarket") },
+  supermarkets: { label: "Supermarket", tags: t("shop", "supermarket") },
+  grocery: { label: "Grocery", tags: t("shop", "supermarket") },
+  grocery_store: { label: "Grocery", tags: t("shop", "supermarket") },
+  bookstore: { label: "Bookstore", tags: t("shop", "books") },
+  bookstores: { label: "Bookstore", tags: t("shop", "books") },
+  "clothing store": { label: "Clothing Store", tags: t("shop", "clothes") },
+  "clothes store": { label: "Clothing Store", tags: t("shop", "clothes") },
+  "electronics store": { label: "Electronics Store", tags: t("shop", "electronics") },
+  "furniture store": { label: "Furniture Store", tags: t("shop", "furniture") },
+  "jewellery store": { label: "Jewellery Store", tags: t("shop", "jewelry") },
+  "jewelry store": { label: "Jewellery Store", tags: t("shop", "jewelry") },
+  // Automotive — note there is deliberately NO bare "car" key: it substring-matched everything.
+  "car dealer": { label: "Car Dealer", tags: t("shop", "car") },
+  "car showroom": { label: "Car Dealer", tags: t("shop", "car") },
+  "car repair": { label: "Car Repair", tags: t("shop", "car_repair") },
+  "car service centre": { label: "Car Repair", tags: t("shop", "car_repair") },
+  mechanic: { label: "Car Repair", tags: t("shop", "car_repair") },
+  mechanics: { label: "Car Repair", tags: t("shop", "car_repair") },
+  "auto parts": { label: "Auto Parts", tags: t("shop", "car_parts") },
   // Education
-  school: { tag: "amenity", value: "school" },
-  schools: { tag: "amenity", value: "school" },
-  university: { tag: "amenity", value: "university" },
-  universities: { tag: "amenity", value: "university" },
-  // Automotive
-  car: { tag: "shop", value: "car" },
-  "car repair": { tag: "shop", value: "car_repair" },
-  "car dealer": { tag: "shop", value: "car" },
-  mechanic: { tag: "shop", value: "car_repair" },
-  mechanics: { tag: "shop", value: "car_repair" },
+  school: { label: "School", tags: t("amenity", "school") },
+  schools: { label: "School", tags: t("amenity", "school") },
+  college: { label: "College", tags: t("amenity", "college") },
+  colleges: { label: "College", tags: t("amenity", "college") },
+  university: { label: "University", tags: t("amenity", "university") },
+  universities: { label: "University", tags: t("amenity", "university") },
+  "play school": { label: "Kindergarten", tags: t("amenity", "kindergarten") },
+  kindergarten: { label: "Kindergarten", tags: t("amenity", "kindergarten") },
+  "coaching centre": { label: "Coaching Centre", tags: t("amenity", "prep_school") },
+  // Professional services
+  lawyer: { label: "Lawyer", tags: t("office", "lawyer") },
+  lawyers: { label: "Lawyer", tags: t("office", "lawyer") },
+  advocate: { label: "Lawyer", tags: t("office", "lawyer") },
+  advocates: { label: "Lawyer", tags: t("office", "lawyer") },
+  "law firm": { label: "Law Firm", tags: t("office", "lawyer") },
+  accountant: { label: "Accountant", tags: t("office", "accountant") },
+  accountants: { label: "Accountant", tags: t("office", "accountant") },
+  "chartered accountant": { label: "Chartered Accountant", tags: t("office", "accountant") },
+  "accounting firm": { label: "Accountant", tags: t("office", "accountant") },
+  auditor: { label: "Auditor", tags: t("office", "accountant") },
+  architect: { label: "Architect", tags: t("office", "architect") },
+  architects: { label: "Architect", tags: t("office", "architect") },
+  "real estate": { label: "Real Estate Agency", tags: t("office", "estate_agent") },
+  "real estate agent": { label: "Real Estate Agency", tags: t("office", "estate_agent") },
+  "estate agent": { label: "Real Estate Agency", tags: t("office", "estate_agent") },
+  "property dealer": { label: "Real Estate Agency", tags: t("office", "estate_agent") },
+  "insurance agency": { label: "Insurance Agency", tags: t("office", "insurance") },
+  "it company": { label: "IT Company", tags: t("office", "it") },
+  "software company": { label: "Software Company", tags: t("office", "it") },
+  "software house": { label: "Software Company", tags: t("office", "it") },
+  "tech company": { label: "IT Company", tags: t("office", "it") },
+  "digital agency": { label: "Advertising Agency", tags: t("office", "advertising_agency") },
+  "marketing agency": { label: "Advertising Agency", tags: t("office", "advertising_agency") },
+  "advertising agency": { label: "Advertising Agency", tags: t("office", "advertising_agency") },
+  "marketing company": { label: "Advertising Agency", tags: t("office", "advertising_agency") },
+  consultancy: { label: "Consultancy", tags: t("office", "consulting") },
+  "consulting firm": { label: "Consultancy", tags: t("office", "consulting") },
+  "employment agency": { label: "Employment Agency", tags: t("office", "employment_agency") },
+  "recruitment agency": { label: "Employment Agency", tags: t("office", "employment_agency") },
+  "staffing agency": { label: "Employment Agency", tags: t("office", "employment_agency") },
+  "coworking space": { label: "Coworking Space", tags: t("office", "coworking") },
+  bank: { label: "Bank", tags: t("amenity", "bank") },
+  banks: { label: "Bank", tags: t("amenity", "bank") },
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+/** Lower-case, collapse whitespace, drop surrounding punctuation. */
+export function normaliseTerm(value: string): string {
+  return (value || "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+/**
+ * Resolve a free-text business-type term to an OSM type.
+ *
+ * Exact match first, then the LONGEST key that appears on a word boundary (never a substring
+ * match: "healthcare clinics" must not resolve through "car"), then a singularised retry.
+ */
+export function lookupBusinessType(term: string): BusinessType | null {
+  const value = normaliseTerm(term)
+  if (!value) return null
+
+  const candidates = [value]
+  const singular = value.replace(/\b(\w{3,})s\b/g, "$1")
+  if (singular !== value) candidates.push(singular)
+
+  for (const candidate of candidates) {
+    if (BUSINESS_TYPE_MAP[candidate]) return BUSINESS_TYPE_MAP[candidate]
+  }
+
+  let best: { key: string; type: BusinessType } | null = null
+  for (const [key, type] of Object.entries(BUSINESS_TYPE_MAP)) {
+    if (key.length < 4) continue
+    for (const candidate of candidates) {
+      if (!new RegExp(`\\b${escapeRegex(key)}\\b`).test(candidate)) continue
+      if (!best || key.length > best.key.length) best = { key, type }
+    }
+  }
+  return best ? best.type : null
+}
+
+/** Every known business type, for docs/tests. */
+export function knownBusinessTypes(): string[] {
+  return Object.keys(BUSINESS_TYPE_MAP).sort()
 }
 
 interface NominatimResult {
@@ -109,9 +240,9 @@ interface OverpassResponse {
 }
 
 interface ParsedQuery {
-  searchTerm: string | null // null means "all businesses"
+  searchTerm: string | null // null means "all businesses of the type"
   location: string
-  businessType: { tag: string; value: string } | null
+  businessType: BusinessType | null
 }
 
 export class OpenStreetMapSource extends BaseSource {
@@ -122,144 +253,84 @@ export class OpenStreetMapSource extends BaseSource {
   rateLimit = 10
 
   /**
-   * Parse user query into search term + location
-   * Examples:
-   *   "restaurants in London" → { searchTerm: null, location: "London", businessType: {amenity: restaurant} }
-   *   "coffee shops in Tokyo" → { searchTerm: null, location: "Tokyo", businessType: {amenity: cafe} }
-   *   "plumbers near Berlin" → { searchTerm: null, location: "Berlin", businessType: {office: plumber} }
-   *   "pizza in New York" → { searchTerm: "pizza", location: "New York", businessType: {amenity: restaurant} }
-   *   "dentists in Paris" → { searchTerm: null, location: "Paris", businessType: {amenity: dentist} }
-   *   "tech companies in San Francisco" → { searchTerm: "tech", location: "San Francisco", businessType: null }
-   *   "New York" → { searchTerm: null, location: "New York", businessType: null }
+   * Parse a user query into {business type, location}.
+   *   "healthcare clinics in Mumbai" -> { Clinic, "Mumbai" }
+   *   "dentists near Paris"          -> { Dentist, "Paris" }
+   *   "tech companies in Pune"       -> { searchTerm: "tech companies", "Pune" }
+   *   "Mumbai"                       -> { null, "Mumbai" }
    */
-  private parseQuery(query: string): ParsedQuery {
-    const q = query.trim()
+  parseQuery(query: string): ParsedQuery {
+    const q = (query || "").trim()
 
-    // Try to match "{type} in/near {location}" pattern
-    const locationPatterns = [
+    for (const pattern of [
       /^(.+?)\s+in\s+(.+)$/i,
       /^(.+?)\s+near\s+(.+)$/i,
       /^(.+?)\s+around\s+(.+)$/i,
       /^(.+?)\s+close\s+to\s+(.+)$/i,
       /^(.+?)\s+nearby\s+(.+)$/i,
-    ]
-
-    for (const pattern of locationPatterns) {
+    ]) {
       const match = q.match(pattern)
-      if (match) {
-        const rawType = match[1].trim().toLowerCase()
-        const location = match[2].trim()
-
-        // Check if the type matches a known business category
-        const businessType = this.lookupBusinessType(rawType)
-
-        if (businessType) {
-          return { searchTerm: null, location, businessType }
-        }
-
-        // Unknown type — use as name search
-        return { searchTerm: rawType, location, businessType: null }
-      }
+      if (!match) continue
+      const rawType = match[1].trim()
+      const location = match[2].trim()
+      const businessType = lookupBusinessType(rawType)
+      // A known type with a place is a directory lookup; anything else is a name search.
+      return businessType
+        ? { searchTerm: null, location, businessType }
+        : { searchTerm: rawType, location, businessType: null }
     }
 
-    // No "in/near" pattern — check if the whole query is a known business type
-    const businessType = this.lookupBusinessType(q.toLowerCase())
-    if (businessType) {
-      return { searchTerm: null, location: q, businessType }
-    }
+    const businessType = lookupBusinessType(q)
+    if (businessType) return { searchTerm: null, location: "", businessType }
 
-    // Treat whole query as a location search for all businesses
     return { searchTerm: null, location: q, businessType: null }
   }
 
-  private lookupBusinessType(term: string): { tag: string; value: string } | null {
-    // Direct match
-    if (BUSINESS_TYPE_MAP[term]) return BUSINESS_TYPE_MAP[term]
-
-    // Try removing trailing 's' for plurals
-    const singular = term.replace(/s$/, "")
-    if (BUSINESS_TYPE_MAP[singular]) return BUSINESS_TYPE_MAP[singular]
-
-    // Partial match — check if any key is contained in the term
-    for (const [key, val] of Object.entries(BUSINESS_TYPE_MAP)) {
-      if (term.includes(key) || key.includes(term)) return val
-    }
-
-    return null
-  }
-
-  /**
-   * Geocode a location string using Nominatim
-   */
   private async geocode(location: string): Promise<NominatimResult | null> {
-    const url = `${NOMINATIM_URL}?q=${encodeURIComponent(location)}&format=json&limit=1`
-    const results = await this.fetchJson<NominatimResult[]>(url, {
-      "User-Agent": USER_AGENT,
-    })
+    if (!location) return null
+    const url = `${NOMINATIM_URL}?q=${encodeURIComponent(location)}&format=json&limit=1&addressdetails=1`
+    const results = await this.fetchJson<NominatimResult[]>(url, { "User-Agent": USER_AGENT })
     if (!results || results.length === 0) return null
     return results[0]
   }
 
-  /**
-   * Build Overpass QL query based on parsed query
-   */
+  /** Union every tag pair for the type (a clinic can be amenity=clinic OR healthcare=clinic). */
   private buildOverpassQuery(parsed: ParsedQuery, bbox: string): string {
-    // bbox format: "south,west,north,east"
+    const nameFilter = parsed.searchTerm
+      ? `["name"~"${parsed.searchTerm.replace(/["\\]/g, "")}",i]`
+      : ""
 
     if (parsed.businessType) {
-      // Search by business type
-      const { tag, value } = parsed.businessType
-      const nameFilter = parsed.searchTerm
-        ? `["name"~"${parsed.searchTerm}",i]`
-        : ""
-
-      return `[out:json][timeout:15];
-(
-  node["${tag}"="${value}"]${nameFilter}(${bbox});
-  way["${tag}"="${value}"]${nameFilter}(${bbox});
-);
-out center body;`
+      const parts: string[] = []
+      for (const { key, value } of parsed.businessType.tags) {
+        for (const element of ["node", "way", "relation"]) {
+          parts.push(`  ${element}["${key}"="${value}"]${nameFilter}(${bbox});`)
+        }
+      }
+      return `[out:json][timeout:25];\n(\n${parts.join("\n")}\n);\nout center 200;`
     }
 
     if (parsed.searchTerm) {
-      // Search by name across all business categories
-      const term = parsed.searchTerm
-      return `[out:json][timeout:15];
-(
-  node["name"~"${term}",i]["amenity"](${bbox});
-  node["name"~"${term}",i]["shop"](${bbox});
-  node["name"~"${term}",i]["office"](${bbox});
-  node["name"~"${term}",i]["tourism"](${bbox});
-  node["name"~"${term}",i]["leisure"](${bbox});
-  way["name"~"${term}",i]["amenity"](${bbox});
-  way["name"~"${term}",i]["shop"](${bbox});
-  way["name"~"${term}",i]["office"](${bbox});
-  way["name"~"${term}",i]["tourism"](${bbox});
-  way["name"~"${term}",i]["leisure"](${bbox});
-);
-out center body;`
+      const term = parsed.searchTerm.replace(/["\\]/g, "")
+      const parts: string[] = []
+      for (const element of ["node", "way", "relation"]) {
+        for (const key of ["amenity", "shop", "office", "tourism", "leisure", "healthcare", "craft"]) {
+          parts.push(`  ${element}["name"~"${term}",i]["${key}"](${bbox});`)
+        }
+      }
+      return `[out:json][timeout:25];\n(\n${parts.join("\n")}\n);\nout center 200;`
     }
 
-    // No specific search — find all named businesses in area
-    return `[out:json][timeout:15];
-(
-  node["name"]["amenity"](${bbox});
-  node["name"]["shop"](${bbox});
-  node["name"]["office"](${bbox});
-  node["name"]["tourism"](${bbox});
-  node["name"]["leisure"](${bbox});
-  way["name"]["amenity"](${bbox});
-  way["name"]["shop"](${bbox});
-  way["name"]["office"](${bbox});
-  way["name"]["tourism"](${bbox});
-  way["name"]["leisure"](${bbox});
-);
-out center body;`
+    // No type, no name: named businesses in the area.
+    const parts: string[] = []
+    for (const element of ["node", "way"]) {
+      for (const key of ["amenity", "shop", "office", "tourism", "leisure"]) {
+        parts.push(`  ${element}["name"]["${key}"](${bbox});`)
+      }
+    }
+    return `[out:json][timeout:25];\n(\n${parts.join("\n")}\n);\nout center 200;`
   }
 
-  /**
-   * Query Overpass API
-   */
   private async queryOverpass(query: string): Promise<OverpassElement[]> {
     try {
       const res = await fetch(OVERPASS_URL, {
@@ -270,9 +341,7 @@ out center body;`
         },
         body: `data=${encodeURIComponent(query)}`,
       })
-
       if (!res.ok) return []
-
       const data = (await res.json()) as OverpassResponse
       return data.elements || []
     } catch {
@@ -280,19 +349,14 @@ out center body;`
     }
   }
 
-  /**
-   * Build a human-readable address from OSM tags
-   */
   private buildAddress(tags: Record<string, string>): string {
     const parts: string[] = []
 
     const houseNumber = tags["addr:housenumber"]
     const street = tags["addr:street"]
-    if (street) {
-      parts.push(houseNumber ? `${houseNumber} ${street}` : street)
-    }
+    if (street) parts.push(houseNumber ? `${houseNumber} ${street}` : street)
 
-    const city = tags["addr:city"]
+    const city = tags["addr:city"] || tags["addr:suburb"] || tags["addr:district"]
     const state = tags["addr:state"]
     const postcode = tags["addr:postcode"]
 
@@ -300,81 +364,64 @@ out center body;`
     if (state) parts.push(state)
     if (postcode) parts.push(postcode)
 
-    if (parts.length === 0 && tags["addr:full"]) {
-      return tags["addr:full"]
-    }
-
+    if (parts.length === 0 && tags["addr:full"]) return tags["addr:full"]
     return parts.join(", ")
   }
 
-  /**
-   * Determine business category from tags
-   */
   private getBusinessCategory(tags: Record<string, string>): string {
+    if (tags.healthcare) return tags.healthcare
     if (tags.amenity) return tags.amenity
     if (tags.shop) return tags.shop
     if (tags.office) return tags.office
+    if (tags.craft) return tags.craft
     if (tags.tourism) return tags.tourism
     if (tags.leisure) return tags.leisure
     return "business"
   }
 
-  /**
-   * Convert Overpass element to Lead
-   */
   private elementToLead(
     element: OverpassElement,
     parsed: ParsedQuery,
-    locationName: string
+    locationName: string,
+    query: string
   ): Lead | null {
     const tags = element.tags
     if (!tags) return null
-
-    const name = tags.name
+    const name = tags.name || tags["name:en"] || tags.operator || tags.brand
     if (!name) return null
 
-    // Get coordinates
     const lat = element.lat ?? element.center?.lat
     const lon = element.lon ?? element.center?.lon
 
-    // Extract contact info
     const phone = tags.phone || tags["contact:phone"] || tags["contact:mobile"]
     const email = tags.email || tags["contact:email"]
     const website = tags.website || tags["contact:website"] || tags.url
-
-    // Build address
     const address = this.buildAddress(tags)
-
-    // Business category
     const category = this.getBusinessCategory(tags)
 
-    // Build location string
-    const location = address
-      ? `${address}, ${locationName}`
-      : locationName
+    const location = [address, locationName].filter(Boolean).join(", ")
 
-    // Cuisine info (for restaurants)
-    const cuisine = tags.cuisine
-
-    // Opening hours
-    const openingHours = tags.opening_hours
-
-    // Build metadata
     const metadata: Record<string, unknown> = {
       source: "OpenStreetMap",
       osmId: element.id,
       osmType: element.type,
       category,
+      // The match was performed by Overpass against the requested type/name and bbox, so the
+      // engine's relevance gate can trust it instead of re-testing the text.
+      match: "attested",
+      matchKind: parsed.businessType ? "business-type" : "name",
+      businessType: parsed.businessType?.label,
+      query,
       lat,
       lon,
+      osmUrl: `https://www.openstreetmap.org/${element.type}/${element.id}`,
     }
-    if (cuisine) metadata.cuisine = cuisine
-    if (openingHours) metadata.openingHours = openingHours
+    if (tags.cuisine) metadata.cuisine = tags.cuisine
+    if (tags.opening_hours) metadata.openingHours = tags.opening_hours
     if (tags.brand) metadata.brand = tags.brand
     if (tags.operator) metadata.operator = tags.operator
     if (tags.description) metadata.description = tags.description
 
-    // Confidence: higher if we have contact info
     let confidence = 0.6
     if (phone) confidence += 0.1
     if (email) confidence += 0.1
@@ -383,81 +430,74 @@ out center body;`
     confidence = Math.min(confidence, 0.95)
 
     return this.makeLead({
-      firstName: "",
+      firstName: name,
       lastName: "",
       company: name,
-      title: category,
+      title: parsed.businessType?.label || category,
       email: email || undefined,
       phone: phone || undefined,
       website: website || undefined,
       location,
       confidence,
-      tags: ["local", "openstreetmap", category],
+      tags: ["local", "openstreetmap", category, parsed.businessType?.label?.toLowerCase() || ""].filter(Boolean),
       metadata,
     })
   }
 
-  /**
-   * Main search method
-   */
   async search(query: string, options?: SearchOptions): Promise<Lead[]> {
     const parsed = this.parseQuery(query)
 
-    // Step 1: Geocode the location
-    const geoResult = await this.geocode(parsed.location)
-    if (!geoResult) {
-      // Fallback: try searching just the raw query as a location
-      const fallback = await this.geocode(query)
-      if (!fallback) return []
-      return this.searchWithGeo({ ...parsed, location: query }, fallback, options)
+    const geo = parsed.location
+      ? await this.geocode(parsed.location)
+      : null
+
+    if (!geo) {
+      // No place in the query — a directory needs one. Return nothing rather than guessing a city.
+      return []
     }
 
-    return this.searchWithGeo(parsed, geoResult, options)
+    return this.searchWithGeo(parsed, geo, options, query)
   }
 
   private async searchWithGeo(
     parsed: ParsedQuery,
     geo: NominatimResult,
-    options?: SearchOptions
+    options: SearchOptions | undefined,
+    query: string
   ): Promise<Lead[]> {
-    // Step 2: Build bbox string (south,west,north,east)
     const [south, north, west, east] = geo.boundingbox
     const bbox = `${south},${west},${north},${east}`
 
-    // Step 3: Build and execute Overpass query
-    const overpassQuery = this.buildOverpassQuery(parsed, bbox)
-    const elements = await this.queryOverpass(overpassQuery)
+    // A country-sized bbox cannot be enumerated (Overpass would time out); say nothing instead.
+    const latSpan = Math.abs(parseFloat(north) - parseFloat(south))
+    const lonSpan = Math.abs(parseFloat(east) - parseFloat(west))
+    if (latSpan > 6 || lonSpan > 6) return []
 
+    const elements = await this.queryOverpass(this.buildOverpassQuery(parsed, bbox))
     if (elements.length === 0) return []
 
-    // Step 4: Convert to leads
-    const locationName = geo.display_name.split(",").slice(0, 3).join(", ")
+    const locationName = geo.display_name.split(",").slice(0, 3).join(",").trim()
     const leads: Lead[] = []
+    const seen = new Set<string>()
 
     for (const element of elements) {
-      const lead = this.elementToLead(element, parsed, locationName)
-      if (lead) leads.push(lead)
+      const lead = this.elementToLead(element, parsed, locationName, query)
+      if (!lead) continue
+      const key = `${lead.company}|${lead.location}`.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      leads.push(lead)
     }
 
-    // Sort by confidence descending
     leads.sort((a, b) => b.confidence - a.confidence)
-
-    // Respect count limit
     const count = options?.count || leads.length
-    return leads.slice(0, Math.min(count, 100))
+    return leads.slice(0, Math.min(count, 200))
   }
 
   async getCompany(domain: string): Promise<CompanyData | null> {
-    // Try to find the business on OSM by searching its name
     const elements = await this.queryOverpass(
-      `[out:json][timeout:10];
-(
-  node["website"~"${domain}",i];
-  way["website"~"${domain}",i];
-);
-out center body;`
+      `[out:json][timeout:10];\n(\n  node["website"~"${domain}",i];\n  way["website"~"${domain}",i];\n);\nout center 5;`
     )
-
     if (elements.length === 0) return null
 
     const el = elements[0]
@@ -469,7 +509,7 @@ out center body;`
       name: tags.name || domain.replace(/\.(com|io|co|org|net|de|fr|jp)$/, ""),
       domain,
       website: tags.website || `https://${domain}`,
-      description: tags.description || `Business found via OpenStreetMap`,
+      description: tags.description || "Business found via OpenStreetMap",
       industry: this.getBusinessCategory(tags),
       headquarters: this.buildAddress(tags) || undefined,
       metadata: {
@@ -485,18 +525,9 @@ out center body;`
   }
 
   async getContact(email: string): Promise<ContactData | null> {
-    // Search OSM for entities with this email
     const elements = await this.queryOverpass(
-      `[out:json][timeout:10];
-(
-  node["email"~"${email}",i];
-  node["contact:email"~"${email}",i];
-  way["email"~"${email}",i];
-  way["contact:email"~"${email}",i];
-);
-out center body;`
+      `[out:json][timeout:10];\n(\n  node["email"~"${email}",i];\n  node["contact:email"~"${email}",i];\n  way["email"~"${email}",i];\n  way["contact:email"~"${email}",i];\n);\nout center 5;`
     )
-
     if (elements.length === 0) return null
 
     const el = elements[0]

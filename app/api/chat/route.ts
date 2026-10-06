@@ -14,29 +14,58 @@ export async function POST(request: NextRequest) {
     if (intent.type === "search") {
       const results = await searchLeads(intent)
       const leadCount = results.leads.length
-      const sources = results.sources.join(", ")
+      const sources = results.sources.join(", ") || "none"
 
       // Maysan Labs: persist what the search found, and record that it ran.
       const saved = await saveLeads(results.leads, results.query || message)
       await logSearch(results.query || message, results.sources, results.total, saved.inserted)
 
-      let content = `I found **${leadCount} leads** matching your query.\n\n`
-      if (results.leads.length > 0) {
-        content += `| Name | Company | Title | Email | Score |\n`
-        content += `|------|---------|-------|-------|-------|\n`
+      let content = ""
+      if (leadCount > 0) {
+        content += `I found **${leadCount} leads** matching your query`
+        if (results.plan?.businessType) content += ` — ${results.plan.businessType}s`
+        if (results.plan?.location) content += ` in ${results.plan.location}`
+        content += `.\n\n`
+        content += `| Name | Company | Title | Contact | Score |\n`
+        content += `|------|---------|-------|---------|-------|\n`
         for (const lead of results.leads.slice(0, 15)) {
           const score = Math.round(lead.confidence * 100)
-          content += `| ${lead.firstName} ${lead.lastName} | ${lead.company || "-"} | ${lead.title || "-"} | ${lead.email || "-"} | ${score}% |\n`
+          const contact = lead.email || lead.phone || lead.website || "-"
+          content += `| ${lead.firstName} ${lead.lastName} | ${lead.company || "-"} | ${lead.title || "-"} | ${contact} | ${score}% |\n`
         }
         if (results.leads.length > 15) {
           content += `\n*...and ${results.leads.length - 15} more results*\n`
         }
+      } else {
+        // An empty result has to explain itself: silence looks like a bug, and the old behaviour —
+        // returning unrelated people — looked like success.
+        content += `**No leads matched** \`${results.query || message}\`.\n\n`
+        if (results.plan?.why?.length) {
+          content += `How this query was routed:\n`
+          for (const reason of results.plan.why) content += `- ${reason}\n`
+        }
       }
-      content += `\n📊 Sources: ${sources}`
+
+      content += `\n📊 Sources queried: ${sources}`
+      if (typeof results.filtered === "number" && results.filtered > 0) {
+        content += `\n🧹 Discarded by the relevance gate: ${results.filtered}`
+      }
+      if (results.notes?.length) {
+        content += `\n\n${results.notes.map((note) => `_${note}_`).join("\n")}`
+      }
 
       return NextResponse.json({
         content,
-        metadata: { leads: results.leads, total: results.total, sources: results.sources },
+        metadata: {
+          leads: results.leads,
+          total: results.total,
+          sources: results.sources,
+          intent: results.intent,
+          filtered: results.filtered,
+          plan: results.plan,
+          notes: results.notes,
+          saved: saved.inserted,
+        },
       })
     }
 
@@ -83,7 +112,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Default: AI-powered response
-    const content = `I understand you're asking about: "${message}"\n\nHere's what I can help with:\n\n- **Search leads**: "Find 50 SaaS founders in San Francisco"\n- **Research companies**: "Research company Tesla"\n- **Verify emails**: "Verify email test@example.com"\n- **Find contacts**: "Find the CTO of Stripe"\n\nTry being more specific and I'll search across 25+ data sources for you!`
+    const content = `I understand you're asking about: "${message}"\n\nHere's what I can help with:\n\n- **Search leads**: "Find 50 SaaS founders in San Francisco"\n- **Research companies**: "Research company Tesla"\n- **Verify emails**: "Verify email test@example.com"\n- **Find contacts**: "Find the CTO of Stripe"\n\nTry being more specific and I'll search every source this deployment has enabled (see Settings → Data Sources) for you!`
 
     return NextResponse.json({ content })
   } catch (error) {

@@ -5,7 +5,7 @@ import type { DataSource, Lead, CompanyData, ContactData, SearchOptions, SourceC
 import googleSource from "./search/google"
 import bingSource from "./search/bing"
 import duckduckgoSource from "./search/duckduckgo"
-import braveSource from "./search/brave"
+import webSearchSource from "./search/web"
 import searxngSource from "./search/searxng"
 import googleCacheSource from "./search/google-cache"
 
@@ -81,9 +81,37 @@ import lumaSource from "./events/luma"
 import conferenceSpeakersSource from "./events/conference-speakers"
 
 // Master registry — 67 data sources
+//
+// Maysan Labs source policy, applied in the constructor below: only sources that return REAL
+// records are allowed to run. 29 of the entries here fabricate their results (random names,
+// `contact0@<domain>` emails, generated phone numbers — see /api/sources/probe), and a lead
+// database full of invented people wastes the sales rep's day and risks deliverability. The
+// engine wires the same list (lib/lead-engine/index.ts); this one keeps the registry, the UI
+// and /api/sources honest about what is actually active.
+//
+// On top of "real", a source only gets asked a query it can actually answer: the engine routes by
+// query intent (lib/lead-engine/query.ts), so dev/academic sources never answer a local-business
+// question the way they used to.
+export const PRODUCTION_SOURCE_IDS = [
+  "openstreetmap", // local businesses by type + place (Overpass + Nominatim, free, no key)
+  "web", // general web results (Brave API/HTML, Bing fallback) — the catch-all
+  "github",
+  "github-orgs",
+  "duckduckgo",
+  "stackoverflow",
+  "devto",
+  "orcid",
+  "google-scholar",
+]
+
+// Real company-data sources used by research/enrichment rather than people search.
+export const COMPANY_RESEARCH_SOURCE_IDS = ["wikidata", "sec-edgar", "opencorporates"]
+
+const ALLOWED_SOURCE_IDS = [...PRODUCTION_SOURCE_IDS, ...COMPANY_RESEARCH_SOURCE_IDS]
+
 const ALL_SOURCES: DataSource[] = [
   // Search (6)
-  googleSource, bingSource, duckduckgoSource, braveSource, searxngSource, googleCacheSource,
+  googleSource, bingSource, duckduckgoSource, webSearchSource, searxngSource, googleCacheSource,
   // Professional (4)
   linkedinSource, xingSource, angellistSource, crunchbaseSource,
   // Company (8)
@@ -116,6 +144,8 @@ export class SourceManager {
     for (const source of ALL_SOURCES) {
       this.sources.set(source.id, source)
       this.weights.set(source.id, 1.0)
+      // Default is "off" for everything outside the Maysan Labs allow-list.
+      source.enabled = ALLOWED_SOURCE_IDS.includes(source.id)
     }
   }
 

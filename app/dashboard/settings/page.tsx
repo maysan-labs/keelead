@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -52,33 +52,45 @@ export default function SettingsPage() {
     setProviders((prev) => prev.map((p) => p.id === id ? { ...p, ...updates } : p))
   }
 
-  const dataSources = [
-    { name: "Web Search", enabled: true, category: "search" },
-    { name: "LinkedIn", enabled: true, category: "professional" },
-    { name: "Company Websites", enabled: true, category: "corporate" },
-    { name: "Crunchbase", enabled: true, category: "startup" },
-    { name: "GitHub", enabled: true, category: "developer" },
-    { name: "Google Maps", enabled: true, category: "local" },
-    { name: "Yelp", enabled: true, category: "local" },
-    { name: "Yellow Pages", enabled: true, category: "directory" },
-    { name: "Hunter.io", enabled: true, category: "email" },
-    { name: "Twitter/X", enabled: true, category: "social" },
-    { name: "AngelList", enabled: true, category: "startup" },
-    { name: "Product Hunt", enabled: true, category: "startup" },
-    { name: "Reddit", enabled: false, category: "social" },
-    { name: "SEC EDGAR", enabled: true, category: "financial" },
-    { name: "WHOIS", enabled: true, category: "domain" },
-    { name: "Glassdoor", enabled: false, category: "employment" },
-    { name: "Job Boards", enabled: true, category: "employment" },
-    { name: "Patent DBs", enabled: false, category: "intellectual-property" },
-    { name: "Google Scholar", enabled: false, category: "academic" },
-    { name: "Conferences", enabled: false, category: "events" },
-    { name: "Podcasts", enabled: false, category: "media" },
-    { name: "Government Registries", enabled: false, category: "government" },
-    { name: "Chamber of Commerce", enabled: false, category: "local" },
-    { name: "DNS/SSL Data", enabled: true, category: "technical" },
-    { name: "App Stores", enabled: false, category: "mobile" },
-  ]
+  // Maysan Labs: the source list used to be a hardcoded array here ("Web Search", "LinkedIn",
+  // "Company Websites"… all enabled) while the engine ran a completely different set — the panel
+  // promised a toolbox it did not have. It now reads GET /api/sources, which is answered from the
+  // live source registry, and it is read-only: enabling a source is a deployment decision
+  // (lib/sources/index.ts) because a source that invents its records must never be turned on by a
+  // toggle that only exists in the browser.
+  interface SourceRow {
+    id: string
+    name: string
+    category: string
+    enabled: boolean
+    requiresApiKey: boolean
+    rateLimit: number
+  }
+  const [dataSources, setDataSources] = useState<SourceRow[]>([])
+  const [sourceStats, setSourceStats] = useState<{ total: number; enabled: number; free: number; paid: number } | null>(null)
+  const [sourcesError, setSourcesError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/sources")
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return
+        setDataSources(data.sources || [])
+        setSourceStats({
+          total: data.total ?? 0,
+          enabled: data.enabled ?? 0,
+          free: data.free ?? 0,
+          paid: data.paid ?? 0,
+        })
+      })
+      .catch(() => {
+        if (!cancelled) setSourcesError("Could not load the source registry.")
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   return (
     <div className="space-y-6">
@@ -209,17 +221,38 @@ export default function SettingsPage() {
           <Card className="bg-[#0a0a0a] border-white/10">
             <CardHeader>
               <CardTitle className="text-base">Data Sources</CardTitle>
-              <CardDescription>Enable or disable individual data sources for lead generation.</CardDescription>
+              <CardDescription>
+                {sourceStats
+                  ? `${sourceStats.enabled} of ${sourceStats.total} registered sources are active on this deployment.`
+                  : "Reading the source registry…"}
+              </CardDescription>
             </CardHeader>
             <CardContent>
+              <p className="text-xs text-zinc-400 mb-4">
+                Active means the source returns real records <em>and</em> is asked only the queries it can
+                answer — the engine routes by query type (local business, developer, academic, company, web).
+                Toggling happens in the deployment&apos;s source policy, not here: a source that fabricates its
+                records must not be switchable on from a browser.
+              </p>
+              {sourcesError && <p className="text-sm text-red-400 mb-4">{sourcesError}</p>}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {dataSources.map((source) => (
-                  <div key={source.name} className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
+                  <div key={source.id} className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
                     <div>
                       <p className="text-sm font-medium">{source.name}</p>
-                      <p className="text-xs text-zinc-400 capitalize">{source.category}</p>
+                      <p className="text-xs text-zinc-400 capitalize">
+                        {source.category}
+                        {source.requiresApiKey ? " · API key" : " · keyless"}
+                      </p>
                     </div>
-                    <Switch defaultChecked={source.enabled} />
+                    <Badge
+                      variant="outline"
+                      className={source.enabled
+                        ? "border-emerald-500/40 text-emerald-300"
+                        : "border-white/15 text-zinc-500"}
+                    >
+                      {source.enabled ? "Active" : "Off"}
+                    </Badge>
                   </div>
                 ))}
               </div>
@@ -354,7 +387,7 @@ export default function SettingsPage() {
                 <div className="flex items-center justify-between mb-3">
                   <div>
                     <h3 className="font-medium">MCP Server Status</h3>
-                    <p className="text-xs text-zinc-400">stdio transport • 57 data sources</p>
+                    <p className="text-xs text-zinc-400">stdio transport • active source list: Settings → Data Sources</p>
                   </div>
                   <Badge className="bg-emerald-500/20 text-emerald-400 border-0">Ready</Badge>
                 </div>
@@ -379,7 +412,7 @@ export default function SettingsPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 {[
-                  { tool: "keelead_search_leads", desc: "Search 57 sources" },
+                  { tool: "keelead_search_leads", desc: "Search the active sources" },
                   { tool: "keelead_verify_email", desc: "10-layer verification" },
                   { tool: "keelead_research_company", desc: "Deep company research" },
                   { tool: "keelead_find_contact", desc: "Find contacts" },

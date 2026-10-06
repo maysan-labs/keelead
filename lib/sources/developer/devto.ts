@@ -30,18 +30,32 @@ export class DevToSourceSource extends BaseSource {
 
   async search(query: string, options?: SearchOptions): Promise<Lead[]> {
     const count = Math.min(options?.count || 10, 30) // Dev.to max is 1000 but keep reasonable
-    const tag = query.replace(/\s+/g, "").toLowerCase()
+    // Dev.to has no full-text search API: the only query it accepts is a single TAG. Deriving a
+    // tag from a phrase ("healthcare clinics in Mumbai" -> "healthcareclinicsinmumbai") always
+    // misses, so only single-token queries are sent, and a miss returns NOTHING.
+    //
+    // The upstream version fell back to `top=7` (the most popular articles of the week) when the
+    // tag had no articles, which silently replaced the user's query with "whatever developers are
+    // writing about" — that is where the five unrelated Dev.to authors in the Mumbai clinic search
+    // came from. A source that cannot answer the query must say so, not answer a different one.
+    const tokens = query
+      .toLowerCase()
+      .split(/\s+/)
+      .map((token) => token.replace(/[^a-z0-9+#.]/g, ""))
+      .filter((token) => token.length >= 3)
+    if (tokens.length !== 1) return []
+    const tag = tokens[0]
+
     const url = `https://dev.to/api/articles?per_page=${count}&tag=${encodeURIComponent(tag)}`
     const articles = await this.fetchJson<DevToArticle[]>(url)
+    if (!articles?.length) return []
 
-    if (!articles?.length) {
-      // Fallback: search by top articles
-      const topUrl = `https://dev.to/api/articles?per_page=${count}&top=7`
-      const topArticles = await this.fetchJson<DevToArticle[]>(topUrl)
-      if (!topArticles?.length) return []
-      return this.extractLeads(topArticles, options)
-    }
-    return this.extractLeads(articles, options)
+    // Belt and braces: keep only articles actually tagged with the query term.
+    const tagged = articles.filter((article) =>
+      (article.tag_list || []).some((value) => value.toLowerCase() === tag)
+    )
+    if (!tagged.length) return []
+    return this.extractLeads(tagged, options)
   }
 
   private extractLeads(articles: DevToArticle[], options?: SearchOptions): Lead[] {

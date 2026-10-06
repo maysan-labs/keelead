@@ -98,20 +98,66 @@ Only real integrations are wired in (`lib/lead-engine/index.ts`):
 
 | Source | What it returns |
 |---|---|
+| OpenStreetMap (`openstreetmap`) | **local businesses by type + place** — Overpass + Nominatim, no key. Real names, addresses, phones, websites. |
+| Web Search (`web`) | **general web results** — Brave API when a key is set, else the Brave results page, else Bing. Company-shaped leads from real search hits. |
 | GitHub (`github`, `github-orgs`) | users and organisations, public API |
-| DuckDuckGo (`duckduckgo`) | web results |
+| DuckDuckGo (`duckduckgo`) | DuckDuckGo instant answers (entity questions only) |
 | Stack Overflow (`stackoverflow`) | developer profiles |
-| Dev.to (`devto`) | developer authors |
+| Dev.to (`devto`) | developer authors — single-word TAG queries only |
 | ORCID (`orcid`) | researchers and research organisations |
 | Google Scholar (`google-scholar`) | academics |
 
 `wikidata`, `sec-edgar` and `opencorporates` stay enabled for company research/enrichment.
-Everything else is disabled in both the engine and the shared registry, so the UI cannot present
-a generator as an active source.
+Everything else is disabled in both the engine and the shared registry, so the UI cannot present a
+generator as an active source.
 
 **Re-run the probe after any upstream upgrade** before trusting a source list again, and never
 enable a source that invents its results: a call sheet full of non-existent people wastes the
 sales rep's day and burns sender reputation.
+
+## Routing and the relevance gate — why a query no longer returns nonsense
+
+Being real is not enough. A source must also be able to answer the question asked, so the engine
+plans the query before it searches (`lib/lead-engine/query.ts`) and gates what comes back
+(`lib/lead-engine/relevance.ts`).
+
+**What went wrong without this** (observed live): `healthcare clinics in Mumbai` was sent to every
+enabled source. DuckDuckGo, GitHub, GitHub Orgs, Stack Overflow, OpenCorporates and SEC EDGAR
+returned nothing; Dev.to returned **three unrelated developers** (its tag lookup missed, and the
+code then fell back to `top=7` — "most popular articles this week" — ignoring the query entirely);
+Google Scholar returned a 2021 paper and ORCID a random researcher. Five of those were stored as
+leads at score 70, and the panel's Settings → Data Sources tab listed 57 sources as enabled when 7
+were.
+
+The rules now:
+
+* **The query is classified** — `local` / `developer` / `academic` / `company` / `web` — and only
+  the sources for that class are called at all. A local-business query never reaches Dev.to.
+* **A source that cannot match the query returns nothing.** Dev.to searches a real tag or nothing;
+  no source may substitute "popular stuff" for the query.
+* **Every lead passes the relevance gate** before it is returned or written. A lead passes when the
+  source attested the match itself (Overpass matched the business type inside the requested place —
+  so a clinic called "SK Wheels" is legitimate) or when a content keyword of the query (and, for
+  local queries, the place) appears in the record. The gate runs **twice**: in the engine, and again
+  in `lib/leads-store.ts` before the INSERT.
+* **An empty result explains itself.** The chat answer lists the routing decision ("Clinic is a
+  business-directory lookup, so OpenStreetMap is queried for Mumbai"), the sources queried, and how
+  many rows the gate discarded. Nothing returns a confident-looking table of the wrong people.
+* **`/api/sources` is answered from the registry**, so the UI can no longer advertise sources that
+  do not run; the Settings tab is read-only and shows the live Active/Off state plus the routing
+  table computed by the real planner.
+
+Business-type coverage in `lib/sources/local/openstreetmap.ts` is a phrase table matched on **word
+boundaries, longest phrase first** — the upstream substring matcher resolved "healthcare clinics"
+through the key `car` ("care" contains "car") and returned car showrooms for a clinic search.
+
+## The web source is a chain, and it fails closed
+
+`lib/sources/search/web.ts`: Brave API (if `BRAVE_SEARCH_API_KEY` is set) → Brave results page
+(HTML) → Bing results page (HTML). Brave rate-limits by IP with HTTP 429 after a burst, so requests
+are paced (≥2 s apart) and one retry is allowed; Bing localises to the server's region, which is why
+it is last. If every provider refuses, the source returns `[]` — it never invents a record. Every
+lead records which path produced it in `metadata.via`.
 
 ## Operating it from Hermes
 

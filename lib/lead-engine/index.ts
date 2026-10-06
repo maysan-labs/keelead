@@ -1,7 +1,9 @@
 // Lead Generation Engine - Multi-source orchestrator
 import { LeadIntent } from "@/lib/ai"
-import { sourceManager } from "@/lib/sources"
+import { sourceManager, PRODUCTION_SOURCE_IDS as PRODUCTION_SOURCE_IDS_FROM_REGISTRY } from "@/lib/sources"
 import type { Lead as SourceLead, SearchOptions as SourceSearchOptions } from "@/lib/sources/types"
+import { planQuery } from "./query"
+import { filterRelevant } from "./relevance"
 
 export interface Lead {
   id?: string
@@ -27,6 +29,17 @@ export interface SearchResult {
   sources: string[]
   query: string
   timestamp: Date
+  // Maysan Labs: what the engine decided and what it threw away. Surfaced in the chat response so
+  // an empty result explains itself instead of looking like a failure.
+  intent?: string
+  filtered?: number
+  notes?: string[]
+  plan?: {
+    keywords: string[]
+    location?: string
+    businessType?: string
+    why: string[]
+  }
 }
 
 // Data source plugin interface
@@ -326,19 +339,9 @@ function generateEmailPatternLeads(query: string, params: Record<string, string>
 // behaving that way. Writing them into the lead database would fill the sales pipeline with
 // people who do not exist — a wasted call sheet and a deliverability risk — so they are
 // disabled and only sources that returned real records for a plain lead query are wired in.
-// Re-run the probe after any upstream upgrade before trusting a source list again.
-const PRODUCTION_SOURCE_IDS = [
-  "github", // GitHub users (public API)
-  "github-orgs", // GitHub organisations (public API)
-  "duckduckgo", // web results
-  "stackoverflow", // developer profiles (public API)
-  "devto", // developer articles/authors (public API)
-  "orcid", // researchers and research organisations (public API)
-  "google-scholar", // academics
-]
-
-// Real company-data sources used by research/enrichment rather than people search.
-const PRODUCTION_COMPANY_SOURCE_IDS = ["wikidata", "sec-edgar", "opencorporates"]
+// The list lives in lib/sources/index.ts so the registry, the UI and the engine agree; re-run
+// the probe after any upstream upgrade before trusting a source list again.
+const PRODUCTION_SOURCE_IDS = PRODUCTION_SOURCE_IDS_FROM_REGISTRY
 
 function adaptRegistrySource(id: string): DataSource | null {
   const source = sourceManager.get(id)
@@ -392,55 +395,70 @@ const SOURCES: DataSource[] = [
 for (const source of SOURCES) source.enabled = false
 SOURCES.push(...PRODUCTION_SOURCE_IDS.map(adaptRegistrySource).filter((s): s is DataSource => s !== null))
 
-// Keep the shared registry view honest too, so the UI and /api/sources show the same truth
-// about which sources are allowed to run.
-const ALLOWED_IDS = [...PRODUCTION_SOURCE_IDS, ...PRODUCTION_COMPANY_SOURCE_IDS]
-for (const source of sourceManager.getAll()) {
-  source.enabled = ALLOWED_IDS.includes(source.id)
-}
+// The shared registry applies the same allow-list in its constructor, so the UI and
+// /api/sources cannot present a generator as an active source.
 
 // Main search orchestrator
+//
+// Maysan Labs: the query is PLANNED first (./query.ts) and only the sources that can answer that
+// class of question are asked at all; results then pass the relevance gate (./relevance.ts) before
+// they are returned or persisted. The old version sent every query to every enabled source and
+// returned the union, which is how a Mumbai clinic search came back full of Dev.to authors.
 export async function searchLeads(intent: LeadIntent): Promise<SearchResult> {
   const { query, params } = intent
-  const enabledSources = SOURCES.filter((s) => s.enabled)
-  const allLeads: Lead[] = []
+  const plan = planQuery(query)
+  const count = parseInt(params?.count || "", 10) || 25
 
-  // Search across all enabled sources
-  const promises = enabledSources.map(async (source) => {
-    try {
-      return await source.search(query, params)
-    } catch {
-      return []
-    }
-  })
-
-  const results = await Promise.all(promises)
-  for (const leads of results) {
-    allLeads.push(...leads)
+  const options: SourceSearchOptions = {
+    count,
+    location: plan.location || params?.location,
+    industry: params?.industry,
   }
 
-  // Deduplicate by email
-  const seen = new Set<string>()
-  const uniqueLeads = allLeads.filter((lead) => {
-    const key = lead.email || `${lead.firstName}-${lead.lastName}-${lead.company}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
+  const known = new Set(sourceManager.getAll().map((source) => source.id))
+  const unknown = plan.sourceIds.filter((id) => !known.has(id))
+  const runnable = plan.sourceIds.filter((id) => {
+    const source = sourceManager.get(id)
+    return Boolean(source && source.enabled)
   })
 
-  // Sort by confidence
-  uniqueLeads.sort((a, b) => b.confidence - a.confidence)
+  const notes: string[] = []
+  if (unknown.length) notes.push(`Not in this build: ${unknown.join(", ")}`)
+  for (const id of plan.sourceIds) {
+    const source = sourceManager.get(id)
+    if (source && !source.enabled) notes.push(`${source.name} is disabled in this deployment's source policy`)
+  }
+  if (runnable.length === 0) {
+    notes.push("No enabled source can answer this query, so nothing was returned — an unrelated result set is worse than an empty one.")
+  }
 
-  // Limit results
-  const limit = parseInt(params.count) || 25
-  const limited = uniqueLeads.slice(0, limit)
+  const raw = runnable.length ? await sourceManager.searchSources(runnable, query, options) : []
+
+  // Nothing runs unattested past this point: keyword + place must match, unless the source
+  // itself matched the record against the query (OpenStreetMap/Overpass does).
+  const { kept, dropped, dropReasons } = filterRelevant(raw, plan)
+  if (dropped > 0) {
+    notes.push(`${dropped} result${dropped === 1 ? "" : "s"} discarded by the relevance gate`)
+    notes.push(...dropReasons.map((reason) => `Discarded — ${reason}`))
+  }
+
+  const limited = kept.slice(0, count)
 
   return {
     leads: limited,
-    total: uniqueLeads.length,
-    sources: enabledSources.map((s) => s.name),
+    total: kept.length,
+    sources: runnable.map((id) => sourceManager.get(id)?.name || id),
     query,
     timestamp: new Date(),
+    intent: plan.intent,
+    filtered: dropped,
+    notes,
+    plan: {
+      keywords: plan.keywords,
+      location: plan.location,
+      businessType: plan.businessType?.label,
+      why: plan.why,
+    },
   }
 }
 

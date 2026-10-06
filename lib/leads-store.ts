@@ -6,11 +6,15 @@
 // read the same real rows.
 import prisma from "@/lib/db"
 import type { Lead as EngineLead } from "@/lib/lead-engine"
+import { planQuery } from "@/lib/lead-engine/query"
+import { isRelevant } from "@/lib/lead-engine/relevance"
 
 export interface SaveResult {
   inserted: number
   skipped: number
   duplicates: string[]
+  /** Records the relevance gate threw away — they never reach the table. */
+  filtered: number
 }
 
 /** Normalise the scraper's confidence (0-1 or 0-100) into the Lead.score column (0-100). */
@@ -28,9 +32,20 @@ function toScore(confidence: number | undefined): number {
 export async function saveLeads(leads: EngineLead[], query: string): Promise<SaveResult> {
   let inserted = 0
   let skipped = 0
+  let filtered = 0
   const duplicates: string[] = []
 
-  for (const lead of leads) {
+  // Defence in depth: the engine already gates its results, but a caller that reaches this
+  // function directly (an API route, a script) must not be able to write an unrelated record into
+  // the lead table. The gate runs against the SAME query the leads were found with.
+  const plan = planQuery(query || "")
+  const relevant = leads.filter((lead) => {
+    const verdict = isRelevant(lead, plan)
+    if (!verdict.ok) filtered++
+    return verdict.ok
+  })
+
+  for (const lead of relevant) {
     const email = (lead.email || "").trim().toLowerCase() || null
     const firstName = (lead.firstName || "").trim()
     const lastName = (lead.lastName || "").trim()
@@ -78,7 +93,7 @@ export async function saveLeads(leads: EngineLead[], query: string): Promise<Sav
     }
   }
 
-  return { inserted, skipped, duplicates }
+  return { inserted, skipped, duplicates, filtered }
 }
 
 /** Record a search so "Searches today" and the activity feed are real. Never fatal. */

@@ -15,10 +15,10 @@ const ENDPOINTS = [
   {
     method: "POST",
     path: "/api/leads",
-    description: "Search for leads across 57 data sources",
+    description: "Search for leads — the engine routes the query to the sources that can answer it",
     category: "Leads",
-    body: '{\n  "query": "SaaS founders in San Francisco",\n  "count": 25,\n  "location": "San Francisco, CA",\n  "industry": "SaaS"\n}',
-    response: '{\n  "leads": [\n    {\n      "firstName": "Sarah",\n      "lastName": "Chen",\n      "email": "sarah@techcorp.com",\n      "company": "TechCorp",\n      "title": "CEO",\n      "confidence": 0.92\n    }\n  ],\n  "total": 42,\n  "sources": ["LinkedIn", "Crunchbase", "GitHub"]\n}',
+    body: '{\n  "query": "healthcare clinics in Mumbai",\n  "count": 25\n}',
+    response: '{\n  "leads": [\n    {\n      "firstName": "Mumbai Citiclinic",\n      "lastName": "",\n      "company": "Mumbai Citiclinic",\n      "title": "Clinic",\n      "website": "https://mumbaiclinic.com/",\n      "location": "Mumbai",\n      "confidence": 0.7\n    }\n  ],\n  "total": 12,\n  "sources": ["OpenStreetMap", "Brave Search"],\n  "intent": "local",\n  "filtered": 3\n}',
   },
   {
     method: "GET",
@@ -54,17 +54,17 @@ const ENDPOINTS = [
   {
     method: "POST",
     path: "/api/chat",
-    description: "Send chat message and get AI response (streaming)",
+    description: "Send a chat message; search intents run the lead engine and persist the leads",
     category: "AI",
-    body: '{\n  "message": "Find 50 SaaS founders in SF",\n  "provider": "openai",\n  "stream": true\n}',
-    response: '{\n  "response": "I found 47 SaaS founders...",\n  "leads": [...],\n  "sources": ["LinkedIn", "Crunchbase"]\n}',
+    body: '{\n  "message": "healthcare clinics in Mumbai"\n}',
+    response: '{\n  "content": "I found **5 leads** matching your query — clinics in Mumbai.",\n  "metadata": {\n    "total": 5,\n    "sources": ["OpenStreetMap", "Brave Search"],\n    "intent": "local",\n    "filtered": 0,\n    "saved": 5\n  }\n}',
   },
   {
     method: "GET",
     path: "/api/sources",
-    description: "List all 57 data sources with status",
+    description: "List every registered data source with its live enabled state and the routing policy",
     category: "Sources",
-    response: '{\n  "sources": [\n    { "id": "google", "name": "Google", "category": "search", "enabled": true },\n    { "id": "linkedin", "name": "LinkedIn", "category": "professional", "enabled": true }\n  ],\n  "total": 57,\n  "enabled": 42\n}',
+    response: '{\n  "sources": [\n    { "id": "openstreetmap", "name": "OpenStreetMap", "category": "local", "requiresApiKey": false, "enabled": true },\n    { "id": "google", "name": "Google", "category": "search", "requiresApiKey": true, "enabled": false }\n  ],\n  "total": 67,\n  "enabled": 10,\n  "free": 33,\n  "policy": { "note": "…sources that fabricate records stay disabled…" }\n}',
   },
   {
     method: "GET",
@@ -128,14 +128,14 @@ export default function ApiDocsPage() {
           </div>
           <p className="text-zinc-400 text-lg max-w-2xl">
             REST API for lead generation, email verification, company research, and more.
-            57 data sources. AI-powered. Open source.
+            Real data only — see /api/sources for the sources this deployment enables.
           </p>
         </div>
 
         {/* Quick Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12">
           {[
-            { icon: Database, label: "Data Sources", value: "57" },
+            { icon: Database, label: "Registered Sources", value: "67" },
             { icon: Globe, label: "API Endpoints", value: "8+" },
             { icon: Zap, label: "AI Providers", value: "6" },
             { icon: Users, label: "Categories", value: "11" },

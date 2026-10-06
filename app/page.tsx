@@ -81,7 +81,7 @@ export default function LandingPage() {
           <div className="text-center mb-16">
             <h2 className="text-3xl sm:text-4xl font-bold mb-4">Everything You Need to Generate Leads</h2>
             <p className="text-zinc-400 text-lg max-w-2xl mx-auto">
-              A complete toolkit powered by AI, with 25+ data sources and multi-layer verification.
+              A complete toolkit powered by AI, with a curated set of real-data sources and multi-layer verification.
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
