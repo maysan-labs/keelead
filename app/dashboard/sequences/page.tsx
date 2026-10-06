@@ -1,263 +1,210 @@
-"use client"
-
-import { useState } from "react"
+import Link from "next/link"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Switch } from "@/components/ui/switch"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import type { LucideIcon } from "lucide-react"
 import {
-  Mail, Plus, Play, Pause, Copy, Trash2, MoreHorizontal,
-  Clock, Users, TrendingUp, ArrowRight, Sparkles, Send,
-  BarChart3, Eye, MousePointerClick, Reply, Loader2, Wand2
+  GitBranch, Ban, ChevronRight, Megaphone, ClipboardList, Workflow,
+  Send, ShieldCheck, Database,
 } from "lucide-react"
 
-interface SequenceStep {
-  id: string
-  type: "email" | "delay" | "condition"
-  subject?: string
-  body?: string
-  delayDays?: number
-  condition?: string
-}
+/**
+ * This deployment holds leads and campaigns, but it has no sequence / automation
+ * engine: prisma/schema.prisma has no Sequence or SequenceStep model, and there is
+ * no /api/sequences route. The multi-step outreach that actually runs for this
+ * company lives outside this application — n8n automations and the MaysanMails /
+ * WhatsApp tooling on the same server — and this app cannot read or edit those
+ * cadences. So this page states that limit instead of rendering a cadence nobody
+ * here could run. Every name, link and number below refers to something that
+ * exists in this repository; the "would be required" list is explicitly aspirational.
+ */
 
-interface Sequence {
-  id: string
-  name: string
+interface RealSurface {
+  href: string
+  icon: LucideIcon
+  title: string
   description: string
-  status: "active" | "draft" | "paused"
-  steps: SequenceStep[]
-  stats: { enrolled: number; sent: number; opened: number; clicked: number; replied: number }
-  createdAt: string
 }
 
-const demoSequences: Sequence[] = [
+const REAL_SURFACES: RealSurface[] = [
   {
-    id: "1", name: "SaaS Founder Outreach", description: "5-step sequence for SaaS founders",
-    status: "active", createdAt: "2024-10-15",
-    steps: [
-      { id: "s1", type: "email", subject: "Quick question about {{company}}", body: "Hi {{firstName}},\n\nI noticed {{company}} is growing fast..." },
-      { id: "s2", type: "delay", delayDays: 3 },
-      { id: "s3", type: "email", subject: "Following up — {{company}} growth", body: "Hi {{firstName}},\n\nWanted to circle back..." },
-      { id: "s4", type: "delay", delayDays: 5 },
-      { id: "s5", type: "email", subject: "Last try — quick 10 min?", body: "Hi {{firstName}},\n\nI'll keep this brief..." },
-    ],
-    stats: { enrolled: 450, sent: 1230, opened: 567, clicked: 123, replied: 45 },
+    href: "/dashboard/campaigns",
+    icon: Megaphone,
+    title: "Campaigns",
+    description:
+      "Group leads into outreach campaigns. These are real rows in the Campaign table — this screen is where grouping and targeting live.",
   },
   {
-    id: "2", name: "Enterprise Decision Makers", description: "Multi-touch sequence for C-level execs",
-    status: "active", createdAt: "2024-10-10",
-    steps: [
-      { id: "s1", type: "email", subject: "{{firstName}}, strategic question", body: "..." },
-      { id: "s2", type: "delay", delayDays: 2 },
-      { id: "s3", type: "email", subject: "Case study: How {{similar_company}} scaled", body: "..." },
-    ],
-    stats: { enrolled: 200, sent: 400, opened: 210, clicked: 56, replied: 28 },
+    href: "/dashboard/leads",
+    icon: ClipboardList,
+    title: "Leads",
+    description:
+      "The call sheet: every lead with its contact details, status and score, read from the leads database.",
+  },
+]
+
+interface Requirement {
+  icon: LucideIcon
+  title: string
+  detail: string
+}
+
+// Presented strictly as "what would be required" — none of this exists today.
+const REQUIREMENTS: Requirement[] = [
+  {
+    icon: Database,
+    title: "A Sequence and SequenceStep model",
+    detail:
+      "An ordered list of steps (email / delay / condition) has no table in the schema today. It would have to be added before any cadence could be stored or scheduled here.",
   },
   {
-    id: "3", name: "Startup Seed Round", description: "Congratulate on funding and offer value",
-    status: "draft", createdAt: "2024-10-25",
-    steps: [
-      { id: "s1", type: "email", subject: "Congrats on the {{round}}!", body: "..." },
-    ],
-    stats: { enrolled: 0, sent: 0, opened: 0, clicked: 0, replied: 0 },
+    icon: Send,
+    title: "A sender with its own delivery log",
+    detail:
+      "Running a cadence needs a sending identity plus a per-message log (queued / sent / failed). This deployment keeps no such send records.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "An unsubscribe / consent check on the send path",
+    detail:
+      "Every step would have to consult the existing suppression list (prisma.suppression) and consent records before sending. The suppression list is real and already enforced on the export path, but nothing on a send path consults it here — because there is no send path.",
+  },
+  {
+    icon: Workflow,
+    title: "A scheduler or worker",
+    detail:
+      "Delays and step progression need something to advance them over time. This app has no background worker or cron bound to sequences.",
   },
 ]
 
 export default function SequencesPage() {
-  const [sequences] = useState<Sequence[]>(demoSequences)
-  const [showBuilder, setShowBuilder] = useState(false)
-  const [aiGenerating, setAiGenerating] = useState(false)
-  const [aiPrompt, setAiPrompt] = useState("")
-
-  const handleAiGenerate = async () => {
-    setAiGenerating(true)
-    // Simulate AI generation
-    await new Promise((r) => setTimeout(r, 2000))
-    setAiGenerating(false)
-  }
-
   return (
     <div className="space-y-6">
+      {/* Header — same layout/spacing conventions as the other dashboard pages. */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Email Sequences</h1>
-          <p className="text-zinc-400 text-sm mt-1">Build drip campaigns with AI-powered email writing.</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <GitBranch className="w-5 h-5 text-zinc-400" />
+            Sequences
+          </h1>
+          <p className="text-zinc-400 text-sm mt-1">
+            Multi-step outreach automation — not run from this application.
+          </p>
         </div>
-        <Button onClick={() => setShowBuilder(true)} size="sm" className="bg-blue-500 hover:bg-blue-600">
-          <Plus className="w-4 h-4 mr-2" /> New Sequence
-        </Button>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-        {[
-          { label: "Active Sequences", value: sequences.filter((s) => s.status === "active").length, icon: <Mail className="w-4 h-4 text-blue-400" /> },
-          { label: "Total Enrolled", value: sequences.reduce((a, s) => a + s.stats.enrolled, 0).toLocaleString(), icon: <Users className="w-4 h-4 text-emerald-400" /> },
-          { label: "Emails Sent", value: sequences.reduce((a, s) => a + s.stats.sent, 0).toLocaleString(), icon: <Send className="w-4 h-4 text-purple-400" /> },
-          { label: "Open Rate", value: `${((sequences.reduce((a, s) => a + s.stats.opened, 0) / sequences.reduce((a, s) => a + s.stats.sent, 1)) * 100).toFixed(1)}%`, icon: <Eye className="w-4 h-4 text-yellow-400" /> },
-          { label: "Reply Rate", value: `${((sequences.reduce((a, s) => a + s.stats.replied, 0) / sequences.reduce((a, s) => a + s.stats.sent, 1)) * 100).toFixed(1)}%`, icon: <Reply className="w-4 h-4 text-orange-400" /> },
-        ].map((stat) => (
-          <Card key={stat.label} className="bg-[#0a0a0a] border-white/10">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2 text-zinc-400 text-sm mb-1">{stat.icon} {stat.label}</div>
-              <div className="text-2xl font-bold">{stat.value}</div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      {/* The honest capability notice, in the same pattern as the Signals page's
+          "Not available in this deployment" panel. */}
+      <Card className="bg-white/5 border-white/10 border-dashed">
+        <CardHeader className="p-4">
+          <CardTitle className="text-base font-medium flex items-center gap-2">
+            <Ban className="w-4 h-4 text-zinc-500" />
+            Not available in this deployment
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-4 pt-0 space-y-3">
+          <p className="text-sm text-zinc-300">
+            This deployment holds leads and campaigns, but it has no sequence or
+            automation engine. There is no Sequence model in the database and no
+            sequences API, so no cadence can be shown, created or edited here — and
+            nothing on this page pretends otherwise.
+          </p>
+          <p className="text-sm text-zinc-500">
+            The multi-step email and WhatsApp outreach that actually runs for this
+            company is automated <span className="text-zinc-400">outside this application</span>,
+            using n8n workflows and the MaysanMails / WhatsApp tooling on the same
+            server. This app cannot read, edit or report on those sequences.
+          </p>
+        </CardContent>
+      </Card>
 
-      {/* Sequences */}
-      <div className="space-y-4">
-        {sequences.map((seq) => (
-          <Card key={seq.id} className="bg-[#0a0a0a] border-white/10 hover:border-white/20 transition">
-            <CardContent className="p-5">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-semibold text-lg">{seq.name}</h3>
-                    <Badge className={`border-0 text-xs ${
-                      seq.status === "active" ? "bg-emerald-500/20 text-emerald-400" :
-                      seq.status === "paused" ? "bg-yellow-500/20 text-yellow-400" :
-                      "bg-zinc-500/20 text-zinc-400"
-                    }`}>{seq.status}</Badge>
-                  </div>
-                  <p className="text-sm text-zinc-400 mt-1">{seq.description}</p>
-                </div>
-                <div className="flex gap-1">
-                  {seq.status === "active" ? (
-                    <Button variant="ghost" size="icon" className="w-8 h-8 text-zinc-400 hover:text-yellow-400">
-                      <Pause className="w-4 h-4" />
-                    </Button>
-                  ) : (
-                    <Button variant="ghost" size="icon" className="w-8 h-8 text-zinc-400 hover:text-emerald-400">
-                      <Play className="w-4 h-4" />
-                    </Button>
-                  )}
-                  <Button variant="ghost" size="icon" className="w-8 h-8 text-zinc-400">
-                    <Copy className="w-4 h-4" />
-                  </Button>
-                  <Button variant="ghost" size="icon" className="w-8 h-8 text-zinc-400">
-                    <MoreHorizontal className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-
-              {/* Steps Preview */}
-              <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-2">
-                {seq.steps.map((step, i) => (
-                  <div key={step.id} className="flex items-center gap-2 flex-shrink-0">
-                    <div className={`px-3 py-2 rounded-lg text-xs ${
-                      step.type === "email" ? "bg-blue-500/20 text-blue-400" :
-                      step.type === "delay" ? "bg-zinc-500/20 text-zinc-400" :
-                      "bg-purple-500/20 text-purple-400"
-                    }`}>
-                      {step.type === "email" ? (
-                        <span className="flex items-center gap-1"><Mail className="w-3 h-3" /> {step.subject?.slice(0, 25)}...</span>
-                      ) : step.type === "delay" ? (
-                        <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {step.delayDays}d</span>
-                      ) : (
-                        <span>Condition</span>
-                      )}
+      {/* What this deployment does provide — each a real screen, each a working link. */}
+      <div className="space-y-3">
+        <h2 className="text-sm uppercase tracking-wide text-zinc-500">
+          What this deployment does provide
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {REAL_SURFACES.map((surface) => {
+            const Icon = surface.icon
+            return (
+              <Link key={surface.href} href={surface.href} className="group block">
+                <Card className="bg-[#0a0a0a] border-white/10 hover:border-white/20 transition h-full">
+                  <CardContent className="p-5">
+                    <div className="flex items-center gap-2">
+                      <Icon className="w-4 h-4 text-blue-400" />
+                      <span className="font-semibold">{surface.title}</span>
+                      <ChevronRight className="w-4 h-4 ml-auto text-zinc-500 group-hover:text-zinc-300 transition" />
                     </div>
-                    {i < seq.steps.length - 1 && <ArrowRight className="w-3 h-3 text-zinc-600" />}
-                  </div>
-                ))}
-              </div>
-
-              {/* Stats */}
-              <div className="grid grid-cols-5 gap-3">
-                {[
-                  { label: "Enrolled", value: seq.stats.enrolled, icon: <Users className="w-3 h-3" /> },
-                  { label: "Sent", value: seq.stats.sent, icon: <Send className="w-3 h-3" /> },
-                  { label: "Opened", value: seq.stats.opened, icon: <Eye className="w-3 h-3" /> },
-                  { label: "Clicked", value: seq.stats.clicked, icon: <MousePointerClick className="w-3 h-3" /> },
-                  { label: "Replied", value: seq.stats.replied, icon: <Reply className="w-3 h-3" /> },
-                ].map((stat) => (
-                  <div key={stat.label} className="text-center p-2 rounded-lg bg-white/5">
-                    <div className="flex items-center justify-center gap-1 text-zinc-400 text-xs mb-1">{stat.icon} {stat.label}</div>
-                    <p className="font-bold text-sm">{stat.value.toLocaleString()}</p>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+                    <p className="text-sm text-zinc-400 mt-2">{surface.description}</p>
+                    <p className="text-xs text-zinc-500 mt-3 font-mono">{surface.href}</p>
+                  </CardContent>
+                </Card>
+              </Link>
+            )
+          })}
+        </div>
       </div>
 
-      {/* Create Sequence Dialog */}
-      <Dialog open={showBuilder} onOpenChange={setShowBuilder}>
-        <DialogContent className="bg-[#0a0a0a] border-white/10 max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Create Email Sequence</DialogTitle>
-            <DialogDescription>Build a drip campaign or use AI to generate emails.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 mt-4">
-            <div>
-              <label className="text-sm font-medium mb-1.5 block">Sequence Name</label>
-              <Input placeholder="e.g., SaaS Founder Outreach" className="bg-white/5 border-white/10" />
-            </div>
+      {/* Where the real automation lives, stated plainly. */}
+      <Card className="bg-[#0a0a0a] border-white/10">
+        <CardHeader className="p-4">
+          <CardTitle className="text-base font-medium flex items-center gap-2">
+            <Workflow className="w-4 h-4 text-purple-400" />
+            Where the real automation runs
+          </CardTitle>
+          <CardDescription className="text-zinc-500">
+            These run outside this application and are not controllable from it.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-4 pt-0">
+          <ul className="space-y-2 text-sm text-zinc-400">
+            <li className="flex items-start gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-zinc-600 mt-2 flex-shrink-0" />
+              <span>n8n workflows that drive the multi-step outreach.</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-zinc-600 mt-2 flex-shrink-0" />
+              <span>MaysanMails for email delivery.</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-zinc-600 mt-2 flex-shrink-0" />
+              <span>WhatsApp tooling on the same server.</span>
+            </li>
+          </ul>
+        </CardContent>
+      </Card>
 
-            {/* AI Email Writer */}
-            <Card className="bg-white/5 border-white/10">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <Sparkles className="w-4 h-4 text-purple-400" />
-                  <span className="text-sm font-medium">AI Email Writer</span>
-                </div>
-                <Textarea
-                  value={aiPrompt}
-                  onChange={(e) => setAiPrompt(e.target.value)}
-                  placeholder="Describe your outreach goal... e.g., 'Write a 3-step sequence for SaaS founders, focusing on our AI analytics platform that helps reduce churn by 30%'"
-                  className="bg-white/5 border-white/10 min-h-[80px]"
-                />
-                <Button
-                  onClick={handleAiGenerate}
-                  disabled={aiGenerating || !aiPrompt.trim()}
-                  className="mt-3 bg-purple-500 hover:bg-purple-600"
-                >
-                  {aiGenerating ? (
-                    <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Generating...</>
-                  ) : (
-                    <><Wand2 className="w-4 h-4 mr-2" /> Generate with AI</>
-                  )}
-                </Button>
-              </CardContent>
-            </Card>
-
-            {/* Steps */}
-            <div>
-              <label className="text-sm font-medium mb-2 block">Sequence Steps</label>
-              <div className="space-y-2">
-                <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
-                  <div className="flex items-center gap-2 text-blue-400 text-sm mb-2">
-                    <Mail className="w-4 h-4" /> Step 1: Initial Email
-                  </div>
-                  <Input placeholder="Subject line" className="bg-white/5 border-white/10 mb-2" />
-                  <Textarea placeholder="Email body..." className="bg-white/5 border-white/10 min-h-[60px]" />
-                </div>
-                <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-center text-sm text-zinc-400">
-                  <Clock className="w-4 h-4 mx-auto mb-1" /> Wait 3 days
-                </div>
-                <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
-                  <div className="flex items-center gap-2 text-blue-400 text-sm mb-2">
-                    <Mail className="w-4 h-4" /> Step 2: Follow-up
-                  </div>
-                  <Input placeholder="Subject line" className="bg-white/5 border-white/10 mb-2" />
-                  <Textarea placeholder="Email body..." className="bg-white/5 border-white/10 min-h-[60px]" />
-                </div>
-                <Button variant="outline" className="w-full border-dashed border-white/20 hover:bg-white/5">
-                  <Plus className="w-4 h-4 mr-2" /> Add Step
-                </Button>
-              </div>
-            </div>
-
-            <Button className="w-full bg-blue-500 hover:bg-blue-600">Create Sequence</Button>
+      {/* A future sequence engine — presented only as what WOULD be required. */}
+      <Card className="bg-[#0a0a0a] border-white/10">
+        <CardHeader className="p-4">
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-base font-medium">
+              What a sequence engine would require
+            </CardTitle>
+            <Badge className="bg-zinc-500/20 text-zinc-400 border-0 text-xs font-normal">
+              Would be required
+            </Badge>
           </div>
-        </DialogContent>
-      </Dialog>
+          <CardDescription className="text-zinc-500">
+            None of the following exists in this deployment today.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-4 pt-0">
+          <ul className="space-y-3">
+            {REQUIREMENTS.map((item) => {
+              const Icon = item.icon
+              return (
+                <li key={item.title} className="border-l-2 border-zinc-700 pl-3">
+                  <div className="text-sm font-medium text-zinc-300 flex items-center gap-2">
+                    <Icon className="w-4 h-4 text-zinc-500" />
+                    {item.title}
+                  </div>
+                  <div className="text-sm text-zinc-500 mt-0.5">{item.detail}</div>
+                </li>
+              )
+            })}
+          </ul>
+        </CardContent>
+      </Card>
     </div>
   )
 }

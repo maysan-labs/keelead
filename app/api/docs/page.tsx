@@ -311,7 +311,7 @@ export default function ApiDocsPage() {
   "event": "lead.created",
   "timestamp": "2024-01-15T10:30:00Z",
   "data": {
-    "lead": { "firstName": "Sarah", "company": "TechCorp" }
+    "lead": { "firstName": "Example Clinic", "company": "Example Clinic", "source": "OpenStreetMap" }
   }
 }`}</pre>
               </div>

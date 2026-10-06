@@ -200,6 +200,19 @@ The suppression list is enforced in `exportRows()` — the check sits on the way
 both the CSV download and the export summary exclude a do-not-contact entry. A do-not-contact list
 consulted only in a settings screen is not a control.
 
+`npm run check:screens` (`scripts/check-dashboard-screens.ts`) is the static guard over
+`app/dashboard`: no screen may hold an authored data array (the `const demo*` shape), name a retired
+demo identity or a source this deployment cannot reach, and every `/api/…` path a screen fetches must
+resolve to a route that exists. The first version of this guard only matched `const demoX: [` and
+silently missed `const demoLeads: Lead[] = [` — the real shape — so it was widened and re-proved by
+re-introducing three defect shapes and watching it fail on them. Guard against the guard.
+
+Campaigns are database rows: `GET|POST|PATCH /api/campaigns` read and write the `Campaign` table
+(the route itself used to return four invented campaigns from an inline array served to the UI), with
+the attached-lead count from one query. Sequences has no model and no route: that screen states this
+deployment has no sequence engine and points at the real Campaigns and Leads screens instead of
+rendering cadences nobody can run.
+
 `npm run check:dashboard` (`scripts/check-dashboard-data.ts`, throwaway SQLite) holds 44 checks over
 all of it: an empty database claims nothing, counts match the rows, every illegal move is refused,
 the trail is written on a move and deleted with its lead, each signal fires on the row that should
