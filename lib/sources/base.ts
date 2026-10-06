@@ -44,9 +44,15 @@ export abstract class BaseSource implements DataSource {
     return notes
   }
 
-  protected async fetchJson<T>(url: string, headers?: Record<string, string>): Promise<T | null> {
+  protected async fetchJson<T>(
+    url: string,
+    headers?: Record<string, string>,
+    timeoutMs = 15000
+  ): Promise<T | null> {
     try {
-      const res = await fetch(url, { headers })
+      // Without a timeout an unresponsive upstream holds the whole search open — the request has
+      // no ceiling of its own and the caller eventually reads a dead connection.
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) })
       if (!res.ok) return null
       return (await res.json()) as T
     } catch {

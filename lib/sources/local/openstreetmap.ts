@@ -32,6 +32,10 @@ function hostOf(url: string): string {
     return url
   }
 }
+
+/** One Overpass request may not exceed this; a whole search may not exceed the budget. */
+const OVERPASS_ATTEMPT_TIMEOUT_MS = 15000
+const OVERPASS_TOTAL_BUDGET_MS = 45000
 // Nominatim's usage policy requires a User-Agent that identifies the application and a contact.
 const USER_AGENT = "KeeLead/1.0 (+https://keelead.maysanlabs.com; lead-generation)"
 
@@ -357,8 +361,16 @@ export class OpenStreetMapSource extends BaseSource {
 
   private async queryOverpass(query: string): Promise<OverpassElement[]> {
     let failure = "no response"
-    for (const endpoint of OVERPASS_ENDPOINTS) {
+    // The retry ladder needs a ceiling of its own: two endpoints, each retried, each waiting on an
+    // upstream that may simply never answer (Overpass does exactly that when it is overloaded).
+    const deadline = Date.now() + OVERPASS_TOTAL_BUDGET_MS
+
+    attempts: for (const endpoint of OVERPASS_ENDPOINTS) {
       for (let attempt = 0; attempt < 2; attempt++) {
+        if (Date.now() >= deadline) {
+          failure = `${failure} (gave up after ${OVERPASS_TOTAL_BUDGET_MS / 1000}s)`
+          break attempts
+        }
         try {
           const res = await fetch(endpoint, {
             method: "POST",
@@ -367,11 +379,12 @@ export class OpenStreetMapSource extends BaseSource {
               "User-Agent": USER_AGENT,
             },
             body: `data=${encodeURIComponent(query)}`,
+            signal: AbortSignal.timeout(OVERPASS_ATTEMPT_TIMEOUT_MS),
           })
           if (!res.ok) {
             failure = `HTTP ${res.status} from ${hostOf(endpoint)}`
             // 400 is our query being wrong; retrying it or moving on cannot help.
-            if (res.status === 400) break
+            if (res.status === 400) break attempts
             await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)))
             continue
           }

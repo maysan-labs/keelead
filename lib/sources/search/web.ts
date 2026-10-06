@@ -22,6 +22,8 @@ const USER_AGENT =
 
 /** Minimum gap between outbound requests — self-inflicted 429s are the common failure here. */
 const MIN_REQUEST_GAP_MS = 2000
+/** Ceiling for one provider request; an unanswered socket must not stall the whole search. */
+const PROVIDER_TIMEOUT_MS = 15000
 /** Process-wide pacing state (one Next.js server process on this deployment). */
 let lastRequestAt = 0
 
@@ -45,6 +47,8 @@ async function pacedFetch(url: string, accept: string): Promise<Response | null>
         Accept: accept,
         "Accept-Language": "en-US,en;q=0.9",
       },
+      // A provider that accepts the connection and then never answers must not hold the search open.
+      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
     })
   } catch {
     return null
