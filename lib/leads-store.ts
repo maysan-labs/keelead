@@ -94,7 +94,7 @@ export async function saveLeads(leads: EngineLead[], query: string): Promise<Sav
         continue
       }
 
-      await prisma.lead.create({
+      const created = await prisma.lead.create({
         data: {
           firstName: storedFirst,
           lastName: storedLast,
@@ -115,6 +115,14 @@ export async function saveLeads(leads: EngineLead[], query: string): Promise<Sav
           metadata: JSON.stringify({ ...(lead.metadata || {}), query, importedAt: new Date().toISOString() }),
         },
       })
+      // The audit trail starts when the row does: "where did this lead come from" must be answerable
+      // without reading source code.
+      await prisma.leadActivity.create({
+        data: { leadId: created.id, type: "created", detail: `Found by ${source || "an unknown source"} for "${query}"`, actor: "engine", toValue: "new" },
+      }).catch(() => {
+        /* the row exists either way; a missing audit line must not fail the import */
+      })
+
       inserted++
     } catch (error) {
       console.error("saveLeads: could not persist a lead", error)

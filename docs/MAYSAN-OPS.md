@@ -156,6 +156,57 @@ Business-type coverage in `lib/sources/local/openstreetmap.ts` is a phrase table
 boundaries, longest phrase first** — the upstream substring matcher resolved "healthcare clinics"
 through the key `car` ("care" contains "car") and returned car showrooms for a clinic search.
 
+## The dashboard screens read the database
+
+Every dashboard screen is a view of the Lead table. The invented rows are gone (a board of
+"Sarah Chen @ CloudSync", signal cards about a "$30M Series B", an audit log dated 2024), replaced
+by endpoints whose every number comes from a query:
+
+| Screen | Endpoint | What it shows |
+| --- | --- | --- |
+| Pipeline | `GET /api/pipeline` (also `GET /api/leads?view=board`) | Per-stage counts from `groupBy`, the top rows per stage, and any row whose stored status is not a known stage (`unmapped`) |
+| Signals | `GET /api/signals` | Signals derived from our own rows, each with the `rule` that produced it, plus the signal classes needing a provider we do not run |
+| Compliance | `GET /api/compliance` (+ `POST`, `/api/compliance/suppression`) | What is recorded, what is not, and the forms to record consent/withdrawal and suppression |
+| Leads / exports | `GET /api/leads`, `GET|POST /api/export` | The rows themselves; exports are filtered against the suppression list |
+
+**One data layer.** `lib/leads-query.ts` owns every read and write the UI performs, so the board, the
+signals, the compliance report and the export cannot disagree about what is in the database. No page
+composes its own Prisma query — that is how a screen ends up showing something the API does not.
+
+**The pipeline is a state machine** (`lib/pipeline.ts`), not a set of labels: `new → contacted →
+qualified → converted`, any stage may be `lost`, `lost` may be reopened to `contacted`, and
+`converted` is terminal (a refund or a correction is a new record, so revenue history cannot be
+rewritten by a status change). The board and the API import the same table, so the UI cannot offer a
+move the API will refuse, and a refused move returns the reason the operator can act on (HTTP 409).
+A row whose stored status is not a stage is **surfaced in a warning band** rather than folded into a
+column it does not belong to.
+
+**Every move is audited.** `moveLead()` reads, validates, updates and writes the `LeadActivity` row in
+one transaction — a status that changed with no trail would defeat the only question the trail
+exists to answer. The trail starts at creation (`created`, with the source and the query), and the
+board's detail view is just that lead's activities.
+
+**Signals are computed, and the gaps are named.** `lib/insights.ts` derives every signal from a query
+(hot-but-untouched, waiting >48h, quiet for 14 days, unreachable, possible duplicates). Job changes,
+funding, technographics and website-change monitoring are **listed as unavailable with the provider
+each would need** — a page that looks complete and is fiction is worse than one that states its
+limits.
+
+**Compliance reports evidence, not aspiration.** Each checklist line is computed from a table:
+`evidenced`, `not_recorded`, or `not_available`, with the `detail` naming the count it is based on.
+Recording a withdrawal writes the consent record **and** suppresses the subject immediately, in the
+same request, because a consent table that disagrees with the pipeline mails someone who opted out.
+The suppression list is enforced in `exportRows()` — the check sits on the way out of the system, so
+both the CSV download and the export summary exclude a do-not-contact entry. A do-not-contact list
+consulted only in a settings screen is not a control.
+
+`npm run check:dashboard` (`scripts/check-dashboard-data.ts`, throwaway SQLite) holds 44 checks over
+all of it: an empty database claims nothing, counts match the rows, every illegal move is refused,
+the trail is written on a move and deleted with its lead, each signal fires on the row that should
+trigger it, a suppressed email/domain/phone (last 10 digits) leaves the export and the CSV, and the
+report flips from `not_recorded` to `evidenced` only when a record exists. Making `isSuppressed()`
+return `false` fails 6 of them, including the CSV — that is the falsification proof.
+
 ## Two ways junk still got through, and what stops it now
 
 Both were caught by the harness, not by reading the code: `npm run check:gate`

@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
-import prisma from "@/lib/db"
+import { exportRows, recordExport } from "@/lib/leads-query"
 
 // Maysan Labs: exports are produced from the stored leads (upstream returned a fixed
-// "count = 12847" and a two-row sample CSV regardless of what was in the database).
+// "count = 12847" and a two-row sample CSV regardless of what was in the database), and they are
+// filtered against the suppression list — a do-not-contact entry that does not stop an export is
+// not a control.
 export const dynamic = "force-dynamic"
-
-const MAX_ROWS = 10000
 
 function toCsv(rows: Record<string, unknown>[]): string {
   if (rows.length === 0) return ""
@@ -26,24 +26,25 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}))
     const format: string = (body.format || "csv").toLowerCase()
-    const count = await prisma.lead.count()
+    const { exported, suppressed, totalInDatabase } = await exportRows()
     const filename = `keelead-export-${Date.now()}.${format}`
 
-    await prisma.exportLog.create({
-      data: {
-        format,
-        count,
-        filters: body.filters ? JSON.stringify(body.filters) : null,
-      },
-    })
+    await recordExport(format, exported, body.filters)
 
     return NextResponse.json({
       success: true,
       format,
-      count,
+      count: exported,
+      suppressed,
+      totalInDatabase,
       filename,
       url: `/api/export?format=${format}`,
-      message: count === 0 ? "No leads to export yet" : `Exported ${count} leads to ${format.toUpperCase()}`,
+      message:
+        exported === 0
+          ? totalInDatabase === 0
+            ? "No leads to export yet"
+            : `Nothing to export: all ${totalInDatabase} lead(s) are on the do-not-contact list`
+          : `Exported ${exported} lead(s) to ${format.toUpperCase()}${suppressed ? ` (${suppressed} suppressed and excluded)` : ""}`,
     })
   } catch (error) {
     console.error("export error:", error)
@@ -56,32 +57,15 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const format = (searchParams.get("format") || "csv").toLowerCase()
 
-    const leads = await prisma.lead.findMany({ orderBy: { createdAt: "desc" }, take: MAX_ROWS })
-
-    if (format === "json") {
-      return NextResponse.json({ count: leads.length, leads })
-    }
-
-    if (format !== "csv") {
+    if (format !== "csv" && format !== "json") {
       return NextResponse.json({ error: `Unsupported format: ${format}. Use csv or json.` }, { status: 400 })
     }
 
-    const rows = leads.map((lead) => ({
-      firstName: lead.firstName,
-      lastName: lead.lastName,
-      email: lead.email,
-      phone: lead.phone,
-      company: lead.company,
-      title: lead.title,
-      website: lead.website,
-      linkedin: lead.linkedin,
-      location: lead.location,
-      source: lead.source,
-      status: lead.status,
-      score: lead.score,
-      verified: lead.verified,
-      createdAt: lead.createdAt.toISOString(),
-    }))
+    const { rows, exported, suppressed, totalInDatabase } = await exportRows()
+
+    if (format === "json") {
+      return NextResponse.json({ count: exported, suppressed, totalInDatabase, rows })
+    }
 
     return new NextResponse(toCsv(rows), {
       headers: {

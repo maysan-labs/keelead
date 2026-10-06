@@ -32,13 +32,65 @@ model Lead {
   metadata    String?  // JSON object for extra data
   campaignId  String?
   campaign    Campaign? @relation(fields: [campaignId], references: [id])
+  activities  LeadActivity[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([email])
   @@index([company])
   @@index([status])
+  @@index([score])
   @@index([campaignId])
+  @@index([createdAt])
+}
+
+// Maysan Labs: every change to a lead is recorded, so "who moved this lead, when, and why" has an
+// answer. A pipeline board that cannot produce that trail is a demo; this is what a client's due
+// diligence asks for, and it is the only way a status change is auditable rather than assumed.
+model LeadActivity {
+  id        String   @id @default(cuid())
+  leadId    String
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  type      String // created, status_change, note, contacted, consent, suppressed, exported
+  fromValue String?
+  toValue   String?
+  detail    String?
+  actor     String   @default("system")
+  createdAt DateTime @default(now())
+
+  @@index([leadId])
+  @@index([createdAt])
+}
+
+// Consent and withdrawal records. Compliance reporting may only state what is recorded HERE — the
+// UI reads this table and says "not recorded" where it is empty, rather than claiming GDPR hygiene
+// nobody can evidence.
+model ConsentRecord {
+  id         String   @id @default(cuid())
+  subject    String // the email address, phone number or domain the record applies to
+  channel    String   @default("email") // email, whatsapp, phone
+  status     String // granted, withdrawn, unknown
+  basis      String? // consent, legitimate_interest, contract
+  evidence   String? // where it came from (form URL, message id, call note)
+  source     String?
+  recordedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([subject, channel])
+  @@index([status])
+}
+
+// The do-not-contact list. It is applied on export, so a suppressed contact cannot leave the system
+// by accident — the requirement is only met if the check sits on the way out, not in a UI note.
+model Suppression {
+  id        String   @id @default(cuid())
+  value     String   @unique // email address, phone number or domain
+  kind      String   @default("email") // email, phone, domain
+  reason    String // opted_out, bounced, complained, manual
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([kind])
 }
 
 model Campaign {

@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
-import { Prisma } from "@prisma/client"
 import { searchLeads } from "@/lib/lead-engine"
 import { parseLeadIntent } from "@/lib/ai"
 import { saveLeads, logSearch } from "@/lib/leads-store"
-import prisma from "@/lib/db"
+import { listLeads, pipelineBoard } from "@/lib/leads-query"
+import { STAGE_IDS, isStage } from "@/lib/pipeline"
 
 // Maysan Labs: search AND persist, and expose the stored leads for the UI / Hermes.
 // Upstream ran the scrapers and discarded the results, which is why the database was always
@@ -38,34 +38,38 @@ export async function POST(request: NextRequest) {
 
 // GET lists the leads already in the database. (Upstream's GET re-ran a live scrape on every
 // call, which made paging impossible and filled the UI with unmaterialised results.)
+//
+// `view=board` returns the pipeline board, so the UI has ONE endpoint to read per screen and the
+// two views can never disagree about a count.
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
-    const limit = Math.min(Math.max(parseInt(searchParams.get("limit") || "50", 10) || 50, 1), 1000)
-    const offset = Math.max(parseInt(searchParams.get("offset") || "0", 10) || 0, 0)
 
-    const where: Prisma.LeadWhereInput = {}
-    const status = searchParams.get("status")
-    const source = searchParams.get("source")
-    const q = searchParams.get("q")
-    if (status) where.status = status
-    if (source) where.source = source
-    if (q) {
-      where.OR = [
-        { email: { contains: q } },
-        { firstName: { contains: q } },
-        { lastName: { contains: q } },
-        { company: { contains: q } },
-        { title: { contains: q } },
-      ]
+    if (searchParams.get("view") === "board") {
+      const perStage = parseInt(searchParams.get("perStage") || "25", 10) || 25
+      return NextResponse.json(await pipelineBoard(perStage))
     }
 
-    const [total, leads] = await Promise.all([
-      prisma.lead.count({ where }),
-      prisma.lead.findMany({ where, orderBy: { createdAt: "desc" }, take: limit, skip: offset }),
-    ])
+    const status = (searchParams.get("status") || searchParams.get("stage") || "").trim()
+    if (status && !isStage(status)) {
+      return NextResponse.json({ error: `Unknown stage "${status}" — valid stages are ${STAGE_IDS.join(", ")}` }, { status: 400 })
+    }
 
-    return NextResponse.json({ total, limit, offset, count: leads.length, leads })
+    const minScoreRaw = searchParams.get("minScore")
+    const order = (searchParams.get("order") || "recent").trim()
+
+    const result = await listLeads({
+      status,
+      source: searchParams.get("source") || undefined,
+      campaignId: searchParams.get("campaignId") || undefined,
+      q: searchParams.get("q") || undefined,
+      minScore: minScoreRaw === null ? undefined : Number(minScoreRaw),
+      limit: parseInt(searchParams.get("limit") || "50", 10) || 50,
+      offset: parseInt(searchParams.get("offset") || "0", 10) || 0,
+      order: order === "score" || order === "company" ? order : "recent",
+    })
+
+    return NextResponse.json({ ...result, count: result.leads.length })
   } catch (error) {
     console.error("leads list error:", error)
     return NextResponse.json({ error: "Could not read leads" }, { status: 500 })
