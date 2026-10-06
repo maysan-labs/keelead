@@ -131,7 +131,7 @@ export default function LandingPage() {
           <div className="bg-[#0a0a0a] border border-white/10 rounded-2xl p-6 space-y-4">
             <div className="flex gap-3 justify-end">
               <div className="bg-blue-500/20 border border-blue-500/30 rounded-2xl rounded-tr-sm px-4 py-3 max-w-[80%]">
-                <p className="text-sm">Find me 50 SaaS founders in San Francisco with their emails</p>
+                <p className="text-sm">Find healthcare clinics in Mumbai with their phone numbers</p>
               </div>
             </div>
             <div className="flex gap-3">
@@ -139,16 +139,16 @@ export default function LandingPage() {
                 <Bot className="w-4 h-4" />
               </div>
               <div className="bg-white/5 border border-white/10 rounded-2xl rounded-tl-sm px-4 py-3 max-w-[80%]">
-                <p className="text-sm text-zinc-300 mb-3">I found <span className="text-blue-400 font-semibold">47 SaaS founders</span> in San Francisco. Here are the top results:</p>
+                <p className="text-sm text-zinc-300 mb-3">I found <span className="text-blue-400 font-semibold">25 clinics</span> in Mumbai. Here are the top results:</p>
                 <div className="bg-black/50 rounded-lg p-3 text-xs font-mono">
                   <div className="grid grid-cols-4 gap-2 text-zinc-500 mb-2">
-                    <span>Name</span><span>Company</span><span>Title</span><span>Email</span>
+                    <span>Name</span><span>Company</span><span>Type</span><span>Website</span>
                   </div>
                   <div className="grid grid-cols-4 gap-2 text-zinc-300">
-                    <span>Sarah Chen</span><span>CloudSync</span><span>CEO</span><span className="text-emerald-400">sarah@cloudsync.io</span>
+                    <span>Mahavir Medical Research Centre</span><span>Mahavir Medical Research Centre</span><span>Clinic</span><span className="text-emerald-400">mmrchospital.com</span>
                   </div>
                 </div>
-                <p className="text-xs text-zinc-500 mt-2">47 results from LinkedIn, Crunchbase, Web Search • Confidence: 87%</p>
+                <p className="text-xs text-zinc-500 mt-2">25 results from OpenStreetMap, Web Search • Confidence: 95%</p>
               </div>
             </div>
           </div>
