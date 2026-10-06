@@ -6,8 +6,12 @@
 #   * upstream's runtime stage copies /app/.next/standalone, but next.config.js never set
 #     `output: 'standalone'`, so `next build` never produced that directory and the image
 #     could not be built at all (Docker COPY of a missing path is a hard failure);
-#   * the base is Debian, not Alpine, so the Prisma query engine generated in the builder
-#     matches the libc of the runtime image (a musl engine cannot run on glibc);
+#   * every stage descends from one base image that already has openssl installed, because
+#     Prisma picks its query-engine target by probing libssl AT BUILD TIME: a builder
+#     without libssl generates a client pinned to debian-openssl-1.1.x, and the runtime then
+#     fails with "could not locate the Query Engine for runtime debian-openssl-3.0.x".
+#     Sharing the base is what keeps generation and runtime on the same target;
+#   * the base is Debian, not Alpine, so the Prisma engine's libc matches the runtime;
 #   * the Prisma CLI stays in the runtime image, because the entrypoint applies the schema
 #     to the SQLite file on the volume on every start;
 #   * Chromium is installed with the exact playwright version the app resolved, so the
@@ -17,17 +21,19 @@
 
 ARG NODE_IMAGE=node:20-bookworm-slim
 
-FROM ${NODE_IMAGE} AS deps
-WORKDIR /app
-# openssl is not in bookworm-slim, and without libssl Prisma cannot detect the platform
-# and loads the wrong query engine (or tries to download one it cannot write).
+# Everything builds on this: openssl is not part of bookworm-slim, and without libssl
+# Prisma cannot detect the platform it is on.
+FROM ${NODE_IMAGE} AS base
 RUN apt-get update \
  && apt-get install -y --no-install-recommends openssl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
+
+FROM base AS deps
+WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
-FROM ${NODE_IMAGE} AS builder
+FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -40,7 +46,7 @@ RUN node node_modules/prisma/build/index.js generate
 RUN npm run build
 RUN date -u +%Y-%m-%dT%H:%M:%SZ > /app/BUILD_TIME
 
-FROM ${NODE_IMAGE} AS runner
+FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
@@ -51,11 +57,6 @@ ENV NODE_ENV=production \
 
 RUN groupadd --system --gid 1001 nodejs \
  && useradd --system --uid 1001 --gid nodejs --create-home nextjs
-
-# Same reason as the deps stage: the Prisma query engine links libssl.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends openssl ca-certificates \
- && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/prisma ./prisma
