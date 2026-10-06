@@ -172,6 +172,19 @@ Both were caught by the harness, not by reading the code: `npm run check:gate`
 * Plural tolerance added while in there: a `clinics` query now also matches a record that says
   `clinic`, which is the common shape of a real clinic page.
 
+## The same business must not be written twice
+
+`npm run check:store` (`scripts/check-lead-store.ts`, throwaway SQLite file) proves persistence.
+It caught the second real bug of this round: the duplicate lookup compared `lastName: ""` against
+rows that had been written with the `"-"` sentinel, so it never matched and re-running a search
+re-inserted the same clinics — 44 rows for 25 real businesses. The stored-name fallback is now
+applied on both sides of the check, a batch is deduped against itself (Overpass can return the same
+business as a node and a way), and the source's own metadata (`osmId`, `match`, the web provider) is
+persisted with the row instead of being thrown away, so a row has provenance.
+
+Do not trust the harness until you have watched it fail: reverting the lookup to `lastName` makes
+`check:store` report 3 rows instead of 1, which is the historical bug reproduced.
+
 ## A source that could not answer says so
 
 An overloaded Overpass used to return a silent `[]`, which the response could only read as "Mumbai

@@ -115,8 +115,12 @@ export function isSearchEngineHost(host: string): boolean {
 
 /** Bing wraps result URLs in /ck/a?…&u=a1<base64url> — decode it, or keep the cite for display. */
 function decodeBingUrl(href: string, cite: string): string {
+  // Bing's markup escapes its own ampersands (`&amp;u=`), and `new URL()` then sees a parameter
+  // named `amp;u` — the decode silently failed and the redirect wrapper (bing.com/ck/a?…) was
+  // stored as the lead's website. Unescape first.
+  const clean = href.replace(/&amp;/g, "&")
   try {
-    const u = new URL(href, "https://www.bing.com").searchParams.get("u")
+    const u = new URL(clean, "https://www.bing.com").searchParams.get("u")
     if (u && u.startsWith("a1")) {
       const decoded = Buffer.from(u.slice(2).replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")
       if (/^https?:\/\//.test(decoded)) return decoded
@@ -124,7 +128,7 @@ function decodeBingUrl(href: string, cite: string): string {
   } catch {
     /* fall through */
   }
-  if (/^https?:\/\//.test(href)) return href
+  if (/^https?:\/\//.test(clean)) return clean
   const cleanCite = cite.replace(/\s*›\s*/g, "/").replace(/^\/+/, "")
   return cleanCite ? `https://${cleanCite}` : ""
 }
