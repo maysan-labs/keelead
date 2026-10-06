@@ -1,20 +1,18 @@
-import { NextRequest, NextResponse } from "next/server"
+import { NextResponse } from "next/server"
+import { deriveSignals } from "@/lib/insights"
 
-export async function POST(request: NextRequest) {
+// Signals are DERIVED from the leads we hold. Upstream's POST returned a fixed list of invented
+// events ("New hire at <company>", "<company> funding activity") attributed to LinkedIn, Crunchbase
+// and "Job Boards" — none of which this deployment runs. Every signal now comes from a query, and the
+// classes we cannot compute are listed as unavailable with the provider they would need.
+export const dynamic = "force-dynamic"
+
+export async function GET() {
   try {
-    const { company, type } = await request.json()
-
-    const signals = [
-      { id: "1", type: "job_change", title: `New hire at ${company}`, description: `Key position filled`, company, date: new Date().toISOString(), score: 85, source: "LinkedIn", actionable: true },
-      { id: "2", type: "hiring", title: `${company} is hiring`, description: `New job postings detected`, company, date: new Date().toISOString(), score: 80, source: "Job Boards", actionable: true },
-      { id: "3", type: "funding", title: `${company} funding activity`, description: `Potential funding detected`, company, date: new Date().toISOString(), score: 90, source: "Crunchbase", actionable: true },
-      { id: "4", type: "news", title: `${company} in the news`, description: `Recent news mention`, company, date: new Date().toISOString(), score: 70, source: "News", actionable: false },
-    ]
-
-    const filtered = type ? signals.filter((s) => s.type === type) : signals
-
-    return NextResponse.json({ signals: filtered, company, total: filtered.length })
+    const signals = await deriveSignals()
+    return NextResponse.json(signals)
   } catch (error) {
-    return NextResponse.json({ error: "Failed to get signals" }, { status: 500 })
+    console.error("signals API error:", error)
+    return NextResponse.json({ error: "Could not compute signals" }, { status: 500 })
   }
 }
