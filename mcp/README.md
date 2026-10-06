@@ -75,7 +75,7 @@ KEELEAD_API_URL=http://your-server:3000 npx tsx mcp/server.ts
 | `keelead_export_leads` | Export to CSV/JSON/Excel/vCard/PDF |
 | `keelead_get_signals` | Intent signals (job changes, funding, hiring) |
 | `keelead_email_pattern` | Find email patterns for a domain |
-| `keelead_list_sources` | List all 57 data sources |
+| `keelead_list_sources` | List the registered data sources |
 | `keelead_lead_score` | AI lead scoring against ICP (0-100) |
 
 ## Available Resources (5)
@@ -85,7 +85,7 @@ KEELEAD_API_URL=http://your-server:3000 npx tsx mcp/server.ts
 | `keelead://leads` | Access lead database |
 | `keelead://campaigns` | Access campaigns |
 | `keelead://signals` | Access intent signals |
-| `keelead://sources` | List 57 data sources |
+| `keelead://sources` | List the registered data sources |
 | `keelead://templates` | Email/search/export templates |
 
 ## Available Prompts (4)
@@ -97,7 +97,7 @@ KEELEAD_API_URL=http://your-server:3000 npx tsx mcp/server.ts
 | `find_similar` | Find leads similar to a profile |
 | `enrich_and_outreach` | Full pipeline: find → enrich → score → outreach |
 
-## Data Sources (57)
+## Data Sources
 
 ### Search Engines (5)
 Google, Bing, DuckDuckGo, Brave, SearXNG

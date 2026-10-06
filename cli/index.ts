@@ -68,7 +68,7 @@ async function main() {
     }
     printLogo()
     log(colors.cyan, `🔍 Searching: ${query}\n`)
-    log(colors.dim, "Searching across 25+ data sources...")
+    log(colors.dim, "Searching the enabled data sources...")
     log(colors.dim, "(Connect to web UI for full interactive experience)\n")
     log(colors.green, `✅ Found results! Run ${colors.bright}keelead serve${colors.reset}${colors.green} for full UI`)
     return
@@ -143,7 +143,7 @@ async function main() {
     log(colors.green, "  ✅ Email Verifier: Ready")
     log(colors.green, "  ✅ Research Engine: Ready")
     log(colors.yellow, "  ⚠️  AI Provider: Not configured")
-    log(colors.dim, "  ℹ️  Data Sources: 25+ available\n")
+    log(colors.dim, "  ℹ️  Data Sources: GET /api/sources reports what this deployment enables\n")
     return
   }
 

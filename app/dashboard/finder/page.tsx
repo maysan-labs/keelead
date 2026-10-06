@@ -112,7 +112,7 @@ export default function FinderPage() {
       {loading && (
         <div className="text-center py-12">
           <Loader2 className="w-10 h-10 mx-auto mb-3 text-blue-400 animate-spin" />
-          <p className="text-zinc-400">Searching across 25+ sources...</p>
+          <p className="text-zinc-400">Searching the sources that can answer this...</p>
         </div>
       )}
 

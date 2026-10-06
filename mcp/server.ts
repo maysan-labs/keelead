@@ -161,7 +161,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "keelead_list_sources",
-      description: "List all 57 available data sources across 11 categories: search, professional, company, local, social, developer, startup, government, education, email, events.",
+      description: "List the registered data sources across 11 categories: search, professional, company, local, social, developer, startup, government, education, email, events.",
       inputSchema: {
         type: "object",
         properties: {
@@ -303,8 +303,7 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     },
     {
       uri: "keelead://sources",
-      name: "Data Sources (57)",
-      description: "List all 57 data sources across 11 categories",
+      name: "Data Sources",
       mimeType: "application/json",
     },
     {
@@ -399,7 +398,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
             role: "user",
             content: {
               type: "text",
-              text: `Generate a personalized ${args?.tone || "friendly"} outreach email for:\n\nName: ${args?.leadName}\nCompany: ${args?.company}\nTitle: ${args?.title}\nPurpose: ${args?.purpose}\n\nUse KeeLead to research the company first (57 sources available), then craft a highly personalized email referencing specific details about their business.`,
+              text: `Generate a personalized ${args?.tone || "friendly"} outreach email for:\n\nName: ${args?.leadName}\nCompany: ${args?.company}\nTitle: ${args?.title}\nPurpose: ${args?.purpose}\n\nUse KeeLead to research the company first (the enabled sources), then craft a highly personalized email referencing specific details about their business.`,
             },
           },
         ],
@@ -423,7 +422,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
             role: "user",
             content: {
               type: "text",
-              text: `Find ${args?.count || 10} leads similar to this profile:\n${args?.profile}\n\nUse KeeLead to search across all 57 data sources and return leads with similar titles, industries, and company sizes.`,
+              text: `Find ${args?.count || 10} leads similar to this profile:\n${args?.profile}\n\nUse KeeLead to search across the registered data sources and return leads with similar titles, industries, and company sizes.`,
             },
           },
         ],
@@ -435,7 +434,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
             role: "user",
             content: {
               type: "text",
-              text: `Full pipeline: Search for "${args?.query}" using KeeLead (57 sources), enrich the top results with additional data, score them, and generate personalized outreach emails for the top 3.\n\nPurpose: ${args?.purpose}`,
+              text: `Full pipeline: Search for "${args?.query}" using KeeLead (the enabled sources), enrich the top results with additional data, score them, and generate personalized outreach emails for the top 3.\n\nPurpose: ${args?.purpose}`,
             },
           },
         ],
@@ -450,7 +449,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport()
   await server.connect(transport)
-  console.error("KeeLead MCP Server v2.0 running on stdio (57 sources, 10 tools, 5 resources, 4 prompts)")
+  console.error("KeeLead MCP Server v2.0 running on stdio (enabled sources, 10 tools, 5 resources, 4 prompts)")
 }
 
 main().catch(console.error)

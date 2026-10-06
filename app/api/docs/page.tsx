@@ -329,9 +329,9 @@ export default function ApiDocsPage() {
             <CardContent className="p-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {[
-                  { plan: "Free", limit: "100 req/min", sources: "10" },
-                  { plan: "Pro", limit: "1,000 req/min", sources: "57" },
-                  { plan: "Enterprise", limit: "Unlimited", sources: "57 + Custom" },
+                  { plan: "Free", limit: "100 req/min", sources: "all enabled" },
+                  { plan: "Pro", limit: "1,000 req/min", sources: "all enabled" },
+                  { plan: "Enterprise", limit: "Unlimited", sources: "all enabled + research" },
                 ].map((tier) => (
                   <div key={tier.plan} className="p-4 rounded-lg bg-white/5 border border-white/10">
                     <h3 className="font-medium mb-1">{tier.plan}</h3>

@@ -70,7 +70,7 @@ export default function LandingPage() {
           <div className="mt-8 flex items-center justify-center gap-6 text-sm text-zinc-500">
             <span className="flex items-center gap-1"><Shield className="w-4 h-4" /> Self-Hosted</span>
             <span className="flex items-center gap-1"><Zap className="w-4 h-4" /> Multi-AI Provider</span>
-            <span className="flex items-center gap-1"><Globe className="w-4 h-4" /> 25+ Data Sources</span>
+            <span className="flex items-center gap-1"><Globe className="w-4 h-4" /> Real-Data Sources</span>
           </div>
         </div>
       </section>
@@ -211,7 +211,7 @@ export default function LandingPage() {
 
 const features = [
   { icon: <MessageSquare className="w-6 h-6 text-blue-400" />, title: "AI Chat Interface", description: "Find leads using natural language. Just ask — like talking to a sales assistant." },
-  { icon: <Search className="w-6 h-6 text-emerald-400" />, title: "25+ Data Sources", description: "Search across LinkedIn, Crunchbase, GitHub, Google Maps, Yelp, and 20+ more sources." },
+  { icon: <Search className="w-6 h-6 text-emerald-400" />, title: "Real-Data Sources", description: "OpenStreetMap, web search, GitHub, Stack Overflow, Dev.to, ORCID and Google Scholar — sources that return records you can actually call." },
   { icon: <Mail className="w-6 h-6 text-blue-400" />, title: "Email Verification", description: "10-layer verification: syntax, MX records, SMTP, disposable detection, and more." },
   { icon: <Building2 className="w-6 h-6 text-emerald-400" />, title: "Company Research", description: "Deep company profiles: tech stack, funding, key people, competitors, and news." },
   { icon: <Users className="w-6 h-6 text-blue-400" />, title: "Contact Finder", description: "Find anyone by name, company, title, or location with confidence scores." },
@@ -223,12 +223,12 @@ const features = [
 
 const steps = [
   { title: "Ask a Question", description: "Type what you need in plain English: 'Find SaaS founders in NYC'" },
-  { title: "AI Searches 25+ Sources", description: "Our engine searches LinkedIn, Crunchbase, web, and more in parallel." },
+  { title: "The Query Goes to the Right Sources", description: "Local businesses go to OpenStreetMap, developers to GitHub and Stack Overflow — and a lead is dropped unless the source can back it up." },
   { title: "Get Verified Leads", description: "Results with emails, phones, confidence scores — ready to export." },
 ]
 
 const stats = [
-  { value: "25+", label: "Data Sources" },
+  { value: "Real", label: "Data Sources Only" },
   { value: "10", label: "Verification Layers" },
   { value: "∞", label: "Self-Hosted" },
   { value: "0$", label: "Forever Free" },

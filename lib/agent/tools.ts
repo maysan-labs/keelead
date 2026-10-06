@@ -130,7 +130,7 @@ export const KEELEAD_TOOLS = [
     type: "function" as const,
     function: {
       name: "keelead_list_sources",
-      description: "List all 57 available data sources with status.",
+      description: "List the registered data sources with status.",
       parameters: { type: "object", properties: {} },
     },
   },

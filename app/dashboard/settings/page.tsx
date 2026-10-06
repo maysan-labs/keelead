@@ -420,7 +420,7 @@ export default function SettingsPage() {
                   { tool: "keelead_export_leads", desc: "Export to CSV/JSON/Excel" },
                   { tool: "keelead_get_signals", desc: "Intent signals" },
                   { tool: "keelead_email_pattern", desc: "Email patterns" },
-                  { tool: "keelead_list_sources", desc: "List 57 sources" },
+                  { tool: "keelead_list_sources", desc: "List the registered sources" },
                   { tool: "keelead_lead_score", desc: "AI lead scoring" },
                 ].map((t) => (
                   <div key={t.tool} className="p-2 rounded bg-black/30 border border-white/5">

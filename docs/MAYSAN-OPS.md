@@ -146,6 +146,11 @@ The rules now:
 * **`/api/sources` is answered from the registry**, so the UI can no longer advertise sources that
   do not run; the Settings tab is read-only and shows the live Active/Off state plus the routing
   table computed by the real planner.
+* **No surface quotes a source count it cannot back up.** The landing page, the API docs page, the
+  finder, the CLI, the A2A card and the MCP server all advertised "25+ sources" and named LinkedIn
+  and Crunchbase, neither of which this deployment enables; they now name only sources that run, and
+  the numbers that remain come from `GET /api/sources`. A count typed into a page is a claim that
+  goes stale silently — read it or do not state it.
 
 Business-type coverage in `lib/sources/local/openstreetmap.ts` is a phrase table matched on **word
 boundaries, longest phrase first** — the upstream substring matcher resolved "healthcare clinics"

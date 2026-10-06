@@ -19,7 +19,7 @@ const API_URL = process.env.KEELEAD_API_URL || "http://localhost:3000"
 // A2A Agent Card (discovery document)
 const agentCard = {
   name: "KeeLead",
-  description: "AI-powered lead generation agent. Finds leads, verifies emails, researches companies, and manages outreach campaigns across 25+ data sources.",
+  description: "AI-powered lead generation agent. Finds leads, verifies emails, researches companies, and manages outreach campaigns across the data sources this deployment enables.",
   url: `http://localhost:${PORT}`,
   version: "1.0.0",
   documentationUrl: "https://keelead.dev/docs",
