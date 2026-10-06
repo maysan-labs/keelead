@@ -19,6 +19,11 @@ ARG NODE_IMAGE=node:20-bookworm-slim
 
 FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
+# openssl is not in bookworm-slim, and without libssl Prisma cannot detect the platform
+# and loads the wrong query engine (or tries to download one it cannot write).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
@@ -47,6 +52,11 @@ ENV NODE_ENV=production \
 RUN groupadd --system --gid 1001 nodejs \
  && useradd --system --uid 1001 --gid nodejs --create-home nextjs
 
+# Same reason as the deps stage: the Prisma query engine links libssl.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/BUILD_TIME ./BUILD_TIME
@@ -65,7 +75,7 @@ RUN node node_modules/playwright/cli.js install --with-deps chromium \
  && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /app/data \
- && chown -R nextjs:nodejs /app/data /app/ms-playwright /app/prisma
+ && chown -R nextjs:nodejs /app/data /app/ms-playwright /app/prisma /app/node_modules
 
 USER nextjs
 EXPOSE 3000
