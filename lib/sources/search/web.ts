@@ -65,6 +65,50 @@ function stripHtml(value: string): string {
     .trim()
 }
 
+/**
+ * Hosts that are the search engine itself, not a business. A SERP can land inside our own result
+ * set — Bing's page for a query it could not answer came back as "bing.com" and was stored as a
+ * lead for a Mumbai clinic search. Nothing on these hosts is ever a lead.
+ */
+const ENGINE_LABELS = new Set([
+  "bing",
+  "google",
+  "duckduckgo",
+  "brave",
+  "yahoo",
+  "baidu",
+  "yandex",
+  "ecosia",
+  "startpage",
+  "qwant",
+  "mojeek",
+  "ask",
+  "aol",
+  "naver",
+  "seznam",
+])
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\d*\./, "").toLowerCase()
+  } catch {
+    return ""
+  }
+}
+
+/**
+ * True when any label of the host is an engine (bing.com, in.bing.com, google.co.uk, search.brave.com),
+ * or when the host cannot be parsed. Erring towards rejection is deliberate: the cost of dropping a
+ * domain that merely contains an engine's name is one missing row, and the cost of keeping one is a
+ * support page in the call sheet.
+ */
+export function isSearchEngineHost(host: string): boolean {
+  if (!host) return true
+  const labels = host.split(".").filter(Boolean)
+  if (labels.length < 2) return true
+  return labels.some((label) => ENGINE_LABELS.has(label))
+}
+
 /** Bing wraps result URLs in /ck/a?…&u=a1<base64url> — decode it, or keep the cite for display. */
 function decodeBingUrl(href: string, cite: string): string {
   try {
@@ -107,7 +151,9 @@ export class WebSearchSource extends BaseSource {
       results = await this.viaBingHtml(query, count)
     }
 
-    return results.map((result) => this.toLead(result, query, options))
+    return results
+      .filter((result) => !isSearchEngineHost(hostOf(result.url)))
+      .map((result) => this.toLead(result, query, options))
   }
 
   private async viaBraveApi(query: string, count: number, via: string): Promise<WebResult[]> {

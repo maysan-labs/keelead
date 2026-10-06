@@ -84,6 +84,13 @@ export interface DataSource {
   search(query: string, options?: SearchOptions): Promise<Lead[]>
   getCompany?(domain: string): Promise<CompanyData | null>
   getContact?(email: string): Promise<ContactData | null>
+  /**
+   * Notes about how the search actually went (an upstream that refused, a place that could not be
+   * resolved). Read-and-clear, so the engine can report them beside the results — a silent zero is
+   * indistinguishable from "nothing exists there", which is how a busy Overpass once read as
+   * "Mumbai has no clinics".
+   */
+  takeNotes?(): string[]
 }
 
 export type SourceCategory =

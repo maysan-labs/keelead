@@ -34,12 +34,56 @@ export function containsWholeToken(haystack: string, token: string): boolean {
   }
 }
 
-/** Everything searchable about a lead, lower-cased, tags and metadata included. */
+/**
+ * Metadata keys that describe OUR request or the bookkeeping of the record, never the record's
+ * content. `query` is the trap: the source echoes the search query back, so matching keywords
+ * against it makes every row relevant. That is how a Bing SERP page (`bing.com`) passed the gate
+ * as a healthcare clinic in Mumbai and got saved as a lead.
+ */
+const BOOKKEEPING_METADATA_KEYS = new Set([
+  "query",
+  "via",
+  "position",
+  "source",
+  "match",
+  "matchKind",
+  "businessType",
+  "lat",
+  "lon",
+  "osmId",
+  "osmType",
+  "osmUrl",
+])
+
+/**
+ * A URL's query string is not content: it is frequently OUR query echoed back (a SERP link, a
+ * redirect, tracking params). Only the host and path may be matched against.
+ */
+function contentOnly(value: string): string {
+  if (!/^https?:\/\//i.test(value)) return value
+  try {
+    const url = new URL(value)
+    return `${url.hostname}${url.pathname.replace(/\/$/, "")}`
+  } catch {
+    return value.split(/[?#]/)[0]
+  }
+}
+
+/** "clinics" also matches "clinic": a page saying "clinic" is not a non-match for a clinics query. */
+function keywordForms(keyword: string): string[] {
+  const forms = [keyword]
+  const singular = keyword.replace(/\b(\w{4,})s\b/g, "$1")
+  if (singular !== keyword) forms.push(singular)
+  return forms
+}
+
+/** Everything searchable about a lead, lower-cased, tags and content metadata included. */
 export function leadHaystack(lead: Lead): string {
   const metadata =
     lead.metadata && typeof lead.metadata === "object"
-      ? Object.values(lead.metadata as Record<string, unknown>)
-          .filter((value) => typeof value === "string")
+      ? Object.entries(lead.metadata as Record<string, unknown>)
+          .filter(([key, value]) => typeof value === "string" && !BOOKKEEPING_METADATA_KEYS.has(key))
+          .map(([, value]) => value as string)
           .join(" ")
       : ""
   const tags = Array.isArray(lead.tags) ? lead.tags.join(" ") : ""
@@ -56,6 +100,7 @@ export function leadHaystack(lead: Lead): string {
     metadata,
   ]
     .filter(Boolean)
+    .map((value) => contentOnly(String(value)))
     .join(" ")
     .toLowerCase()
 }
@@ -73,7 +118,7 @@ export function isRelevant(lead: Lead, plan: QueryPlan): RelevanceVerdict {
 
   // 2. Keyword match.
   const keywords = plan.keywords || []
-  const matched = keywords.filter((keyword) => containsWholeToken(haystack, keyword))
+  const matched = keywords.filter((keyword) => keywordForms(keyword).some((form) => containsWholeToken(haystack, form)))
 
   if (keywords.length > 0 && matched.length === 0) {
     return {

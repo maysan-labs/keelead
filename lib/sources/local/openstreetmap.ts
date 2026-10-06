@@ -18,7 +18,20 @@ import { BaseSource } from "../base"
 import type { Lead, SearchOptions, CompanyData, ContactData } from "../types"
 
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
-const OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+// Two public Overpass instances. An overloaded primary (HTTP 429/504) is the normal case when a
+// burst of queries follows a deploy, so a second instance is tried before giving up.
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+]
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return url
+  }
+}
 // Nominatim's usage policy requires a User-Agent that identifies the application and a contact.
 const USER_AGENT = "KeeLead/1.0 (+https://keelead.maysanlabs.com; lead-generation)"
 
@@ -289,9 +302,20 @@ export class OpenStreetMapSource extends BaseSource {
   private async geocode(location: string): Promise<NominatimResult | null> {
     if (!location) return null
     const url = `${NOMINATIM_URL}?q=${encodeURIComponent(location)}&format=json&limit=1&addressdetails=1`
-    const results = await this.fetchJson<NominatimResult[]>(url, { "User-Agent": USER_AGENT })
-    if (!results || results.length === 0) return null
-    return results[0]
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const results = await this.fetchJson<NominatimResult[]>(url, { "User-Agent": USER_AGENT })
+      // An empty array is Nominatim answering "no such place" — retrying that is pointless.
+      if (results) {
+        if (results.length === 0) {
+          this.note(`OpenStreetMap's geocoder (Nominatim) does not know the place "${location}"`)
+          return null
+        }
+        return results[0]
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+    }
+    this.note(`OpenStreetMap's geocoder (Nominatim) did not answer for "${location}"`)
+    return null
   }
 
   /** Union every tag pair for the type (a clinic can be amenity=clinic OR healthcare=clinic). */
@@ -332,21 +356,38 @@ export class OpenStreetMapSource extends BaseSource {
   }
 
   private async queryOverpass(query: string): Promise<OverpassElement[]> {
-    try {
-      const res = await fetch(OVERPASS_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": USER_AGENT,
-        },
-        body: `data=${encodeURIComponent(query)}`,
-      })
-      if (!res.ok) return []
-      const data = (await res.json()) as OverpassResponse
-      return data.elements || []
-    } catch {
-      return []
+    let failure = "no response"
+    for (const endpoint of OVERPASS_ENDPOINTS) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const res = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded",
+              "User-Agent": USER_AGENT,
+            },
+            body: `data=${encodeURIComponent(query)}`,
+          })
+          if (!res.ok) {
+            failure = `HTTP ${res.status} from ${hostOf(endpoint)}`
+            // 400 is our query being wrong; retrying it or moving on cannot help.
+            if (res.status === 400) break
+            await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)))
+            continue
+          }
+          const data = (await res.json()) as OverpassResponse
+          return data.elements || []
+        } catch (error) {
+          failure = `${error instanceof Error ? error.message : "network error"} (${hostOf(endpoint)})`
+          await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)))
+        }
+      }
     }
+    // Swallowing this is how a busy Overpass read as "Mumbai has no clinics" with no explanation.
+    this.note(
+      `OpenStreetMap's Overpass API did not answer (${failure}) — local businesses are missing from this result`
+    )
+    return []
   }
 
   private buildAddress(tags: Record<string, string>): string {
@@ -453,6 +494,7 @@ export class OpenStreetMapSource extends BaseSource {
 
     if (!geo) {
       // No place in the query — a directory needs one. Return nothing rather than guessing a city.
+      // (When a place WAS named, geocode() has already recorded why it could not be used.)
       return []
     }
 

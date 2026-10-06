@@ -31,6 +31,19 @@ export abstract class BaseSource implements DataSource {
     }
   }
 
+  /** One-line notes for the caller; de-duplicated, and cleared when read. */
+  private diagnostics: string[] = []
+
+  protected note(message: string): void {
+    if (!this.diagnostics.includes(message)) this.diagnostics.push(message)
+  }
+
+  takeNotes(): string[] {
+    const notes = this.diagnostics
+    this.diagnostics = []
+    return notes
+  }
+
   protected async fetchJson<T>(url: string, headers?: Record<string, string>): Promise<T | null> {
     try {
       const res = await fetch(url, { headers })

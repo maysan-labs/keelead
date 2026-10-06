@@ -434,6 +434,14 @@ export async function searchLeads(intent: LeadIntent): Promise<SearchResult> {
 
   const raw = runnable.length ? await sourceManager.searchSources(runnable, query, options) : []
 
+  // A source that could not answer (busy upstream, unresolved place) reports it; a silent zero is
+  // indistinguishable from "nothing exists there", which is how an overloaded Overpass came back as
+  // "Mumbai has no clinics" while the real answer was "the API refused us".
+  for (const id of runnable) {
+    const reported = sourceManager.get(id)?.takeNotes?.()
+    if (reported?.length) notes.push(...reported)
+  }
+
   // Nothing runs unattested past this point: keyword + place must match, unless the source
   // itself matched the record against the query (OpenStreetMap/Overpass does).
   const { kept, dropped, dropReasons } = filterRelevant(raw, plan)

@@ -156,6 +156,30 @@ Business-type coverage in `lib/sources/local/openstreetmap.ts` is a phrase table
 boundaries, longest phrase first** — the upstream substring matcher resolved "healthcare clinics"
 through the key `car` ("care" contains "car") and returned car showrooms for a clinic search.
 
+## Two ways junk still got through, and what stops it now
+
+Both were caught by the harness, not by reading the code: `npm run check:gate`
+(`scripts/check-lead-gate.ts`) — 16 checks, including a positive control for every negative one.
+
+* **The gate was matching our own request.** `leadHaystack()` fed every string in a lead's
+  `metadata` to the keyword test, and sources echo the query back in `metadata.query`. So a Bing SERP
+  page — which contains no clinic and no Mumbai, only a link whose query string is our search —
+  passed as a "healthcare clinic in Mumbai" and was saved (`bing.com`, score 60). Bookkeeping keys
+  (`query`, `via`, `position`, `source`, `match`, latitudes, OSM ids) are now excluded, and a URL is
+  matched on host + path only, because a URL's query string is usually our own query echoed back.
+* **A search engine's own page could be a lead.** Any host whose labels include an engine name
+  (`bing.com`, `in.bing.com`, `google.co.uk`) is dropped by `isSearchEngineHost()` in `web.ts`.
+* Plural tolerance added while in there: a `clinics` query now also matches a record that says
+  `clinic`, which is the common shape of a real clinic page.
+
+## A source that could not answer says so
+
+An overloaded Overpass used to return a silent `[]`, which the response could only read as "Mumbai
+has no clinics" — the real state was "the API refused us". `openstreetmap.ts` now tries two Overpass
+instances, twice each with backoff, and on total failure records a note; `Nominatim` gets one retry,
+and an unresolvable place is reported too. `BaseSource.note()` / `takeNotes()` carry these to the
+engine, which lists them beside the results (chat shows them as italic lines under the table).
+
 ## The web source is a chain, and it fails closed
 
 `lib/sources/search/web.ts`: Brave API (if `BRAVE_SEARCH_API_KEY` is set) → Brave results page
