@@ -4,7 +4,12 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = "file:./keelead.db"
+  // Maysan Labs: upstream hardcoded "file:./keelead.db" here, which made the DATABASE_URL
+  // documented in the README/.env.example/.docker-compose a no-op — `prisma db push` and the
+  // app both ignored it and wrote to prisma/keelead.db inside the image. Reading the
+  // environment is what lets the database live on the mounted volume (and is the only way
+  // to switch to Postgres without editing the schema).
+  url      = env("DATABASE_URL")
 }
 
 model Lead {

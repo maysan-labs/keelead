@@ -1,0 +1,14 @@
+.git
+.gitignore
+.next
+node_modules
+npm-debug.log*
+.env
+.env.local
+.env.*.local
+Dockerfile
+dokploy-compose.yml
+docker-compose.yml
+proxy/Dockerfile
+*.md
+!README.md

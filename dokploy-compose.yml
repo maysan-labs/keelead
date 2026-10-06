@@ -1,0 +1,79 @@
+# KeeLead — Maysan Labs production stack (Dokploy: project "Maysan ecosytem" / production).
+#
+#   browser -> Traefik -> auth-proxy (HTTP Basic) -> keelead (Next.js + SQLite on a volume)
+#
+# The app has no authentication of its own (multi-user auth is on upstream's roadmap), so the
+# only service Traefik is ever pointed at is `auth-proxy`. The app itself publishes no ports.
+#
+# Env values come from the Dokploy env block (written to the `.env` beside this file at deploy
+# time); every variable a service reads is DECLARED below — a value that only exists in the env
+# block never reaches a container.
+services:
+  keelead:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-https://keelead.maysanlabs.com}
+    deploy:
+      resources:
+        limits:
+          memory: 3072M
+          cpus: "1.5"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - DATABASE_URL=file:/app/data/keelead.db
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-https://keelead.maysanlabs.com}
+      # AI providers — optional, all empty by default. The chat surface is provider-agnostic;
+      # CUSTOM_AI_* is how an OpenAI-compatible endpoint (DeepSeek) is wired.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
+      - CUSTOM_AI_ENDPOINT=${CUSTOM_AI_ENDPOINT:-}
+      - CUSTOM_AI_API_KEY=${CUSTOM_AI_API_KEY:-}
+      - CUSTOM_AI_MODEL=${CUSTOM_AI_MODEL:-}
+      # Premium data sources — optional.
+      - HUNTER_API_KEY=${HUNTER_API_KEY:-}
+      - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY:-}
+      - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY:-}
+    volumes:
+      - keelead_data:/app/data
+
+  auth-proxy:
+    build:
+      context: .
+      dockerfile: proxy/Dockerfile
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    depends_on:
+      - keelead
+    environment:
+      - PORT=8080
+      # Required on purpose: without them the deploy fails instead of publishing an
+      # unauthenticated lead-generation dashboard to the internet.
+      - BASIC_AUTH_USER=${BASIC_AUTH_USER:?set BASIC_AUTH_USER in the Dokploy env block}
+      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:?set BASIC_AUTH_PASSWORD in the Dokploy env block}
+
+volumes:
+  keelead_data:
