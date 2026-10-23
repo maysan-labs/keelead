@@ -19,7 +19,7 @@
 #   * the SQLite database lives in /app/data — a path that does NOT shadow /app/prisma,
 #     so the schema and the database can never be confused for one another.
 
-ARG NODE_IMAGE=node:20-bookworm-slim
+ARG NODE_IMAGE=node:22-bookworm-slim
 
 # Everything builds on this: openssl is not part of bookworm-slim, and without libssl
 # Prisma cannot detect the platform it is on.
