@@ -40,7 +40,9 @@ COPY . .
 # NEXT_PUBLIC_* is inlined into the client bundle at build time — a runtime env change
 # does not affect it, so it arrives here as a build arg.
 ARG NEXT_PUBLIC_APP_URL=http://localhost:3000
+ARG NEXT_PUBLIC_SENTRY_DSN=
 ENV NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL} \
+    NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN} \
     NEXT_TELEMETRY_DISABLED=1
 RUN node node_modules/prisma/build/index.js generate
 RUN npm run build

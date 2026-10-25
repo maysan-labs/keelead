@@ -15,6 +15,8 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-https://keelead.maysanlabs.com}
+        # Inlined into the client bundle at build time (Dockerfile builder stage).
+        NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
     deploy:
       resources:
         limits:
@@ -32,6 +34,9 @@ services:
       - HOSTNAME=0.0.0.0
       - DATABASE_URL=file:/app/data/keelead.db
       - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-https://keelead.maysanlabs.com}
+      # GlitchTip error + performance reporting (self-hosted, errors.169.58.86.74.sslip.io).
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN:-}
       # AI providers — optional, all empty by default. The chat surface is provider-agnostic;
       # CUSTOM_AI_* is how an OpenAI-compatible endpoint (DeepSeek) is wired.
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
